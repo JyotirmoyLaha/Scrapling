@@ -106,5 +106,7 @@ output/*/index.html
 
 # Sphinx
 docs/_build
-public/
+/public/
 web/
+.scrapling_dependencies_installed
+
