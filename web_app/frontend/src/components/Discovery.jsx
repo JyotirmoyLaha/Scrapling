@@ -12,7 +12,9 @@ export default function Discovery({ onSelectUrl }) {
   const [hasSearched, setHasSearched] = useState(false);
 
   const handleSearch = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) {
+      e.preventDefault();
+    }
     if (!query.trim()) return;
 
     setLoading(true);
@@ -144,9 +146,34 @@ export default function Discovery({ onSelectUrl }) {
 
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Discovery Engine</h1>
-        <p className="page-subtitle">Paste any data, queries, or news fragments to find relevant information and verified URLs across the web</p>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+        <div>
+          <h1 className="page-title">Discovery Engine</h1>
+          <p className="page-subtitle">Paste any data, queries, or news fragments to find relevant information and verified URLs across the web</p>
+        </div>
+        {hasSearched && (
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => handleSearch()} 
+            disabled={loading}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}
+          >
+            <svg 
+              width="16" 
+              height="16" 
+              viewBox="0 0 24 24" 
+              fill="none" 
+              stroke="currentColor" 
+              strokeWidth="2" 
+              strokeLinecap="round" 
+              strokeLinejoin="round"
+              className={loading ? "spin-animation" : ""}
+            >
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+            </svg>
+            Refresh Results
+          </button>
+        )}
       </div>
 
       {/* Search Console */}
