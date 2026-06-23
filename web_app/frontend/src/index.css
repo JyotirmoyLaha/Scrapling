@@ -605,3 +605,14 @@ pre {
 .nav-control-btn:active {
   transform: scale(0.92);
 }
+
+/* Custom spin animation */
+.spin-animation {
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
