@@ -462,6 +462,10 @@ export default function Scraper({ defaultUrl, setDefaultUrl }) {
   const [graphData, setGraphData] = useState(null);
   const [graphLoading, setGraphLoading] = useState(false);
 
+  // Summary States
+  const [summary, setSummary] = useState('');
+  const [summaryLoading, setSummaryLoading] = useState(false);
+
   useEffect(() => {
     if (defaultUrl) {
       setUrl(defaultUrl);
@@ -473,6 +477,38 @@ export default function Scraper({ defaultUrl, setDefaultUrl }) {
     setActiveResultTab(tabName);
     if (tabName === 'graph' && !graphData && result?.content) {
       handleFetchKnowledgeGraph();
+    }
+    if (tabName === 'summary' && !summary && result?.content) {
+      handleFetchSummary();
+    }
+  };
+
+  const handleFetchSummary = async () => {
+    if (summaryLoading || !result?.content) return;
+
+    setSummaryLoading(true);
+    setSummary('');
+
+    try {
+      const response = await fetch('http://localhost:8000/api/summarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: result.content,
+        }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || 'Summary generation failed');
+      }
+
+      const data = await response.json();
+      setSummary(data.summary);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSummaryLoading(false);
     }
   };
 
@@ -580,6 +616,8 @@ export default function Scraper({ defaultUrl, setDefaultUrl }) {
     setChatHistory([]);
     setSchemaResult(null);
     setGraphData(null);
+    setSummary('');
+    setSummaryLoading(false);
 
     try {
       const response = await fetch('http://localhost:8000/api/scrape', {
@@ -830,7 +868,7 @@ export default function Scraper({ defaultUrl, setDefaultUrl }) {
               {result && (
                 <button 
                   className={`tab-btn ${activeResultTab === 'summary' ? 'active' : ''}`}
-                  onClick={() => setActiveResultTab('summary')}
+                  onClick={() => handleTabChange('summary')}
                 >
                   Brief Summary
                 </button>
@@ -882,8 +920,8 @@ export default function Scraper({ defaultUrl, setDefaultUrl }) {
                 Copy Content
               </button>
             )}
-            {activeResultTab === 'summary' && result && (
-              <button className="copy-btn" onClick={() => copyToClipboard(result.summary)}>
+            {activeResultTab === 'summary' && summary && (
+              <button className="copy-btn" onClick={() => copyToClipboard(summary)}>
                 Copy Summary
               </button>
             )}
@@ -935,9 +973,15 @@ export default function Scraper({ defaultUrl, setDefaultUrl }) {
                   </svg>
                   Extract Summary Brief
                 </h3>
-                <div style={{ color: 'var(--text-main)' }}>
-                  {renderMarkdown(result.summary)}
-                </div>
+                {summaryLoading ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', color: 'var(--text-muted)', fontSize: '0.95rem', padding: '1rem 0' }}>
+                    <span className="loading-pulse"></span> Generating summary via AI...
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--text-main)' }}>
+                    {renderMarkdown(summary)}
+                  </div>
+                )}
               </div>
             )}
 
