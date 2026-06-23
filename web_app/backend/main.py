@@ -644,9 +644,11 @@ class GraphRequest(BaseModel):
 
 current_gemini_index = 0
 current_groq_index = 0
+current_nvidia_index = 0
+current_openrouter_index = 0
 
 async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
-    global current_gemini_index, current_groq_index
+    global current_gemini_index, current_groq_index, current_nvidia_index, current_openrouter_index
     import os
     import httpx
     
@@ -659,9 +661,121 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
     # Load and split Groq keys (support comma-separated)
     groq_env = os.getenv("GROQ_API_KEYS") or os.getenv("GROQ_API_KEY") or ""
     groq_keys = [k.strip() for k in groq_env.split(",") if k.strip()]
+
+    # Load and split NVIDIA keys (support comma-separated)
+    nvidia_env = os.getenv("NVIDIA_API_KEYS") or os.getenv("NVIDIA_API_KEY") or ""
+    nvidia_keys = [k.strip() for k in nvidia_env.split(",") if k.strip()]
+
+    # Load and split OpenRouter keys (support comma-separated)
+    openrouter_env = os.getenv("OPENROUTER_API_KEYS") or os.getenv("OPENROUTER_API_KEY") or ""
+    openrouter_keys = [k.strip() for k in openrouter_env.split(",") if k.strip()]
     
-    if not gemini_keys and not groq_keys:
-        raise Exception("No active AI model keys configured. Please add GEMINI_API_KEY or GROQ_API_KEY to your .env file.")
+    if not gemini_keys and not groq_keys and not nvidia_keys and not openrouter_keys:
+        raise Exception("No active AI model keys configured. Please add GEMINI_API_KEY, GROQ_API_KEY, NVIDIA_API_KEY, or OPENROUTER_API_KEY to your .env file.")
+
+    # Try NVIDIA keys with rotation
+    if nvidia_keys:
+        num_nvidia = len(nvidia_keys)
+        current_nvidia_index = current_nvidia_index % num_nvidia
+        last_nvidia_err = None
+        
+        for attempt in range(num_nvidia):
+            idx = (current_nvidia_index + attempt) % num_nvidia
+            nv_key = nvidia_keys[idx]
+            try:
+                url = "https://integrate.api.nvidia.com/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {nv_key}",
+                    "Content-Type": "application/json"
+                }
+                model_name = os.getenv("NVIDIA_MODEL") or "nvidia/nemotron-3-ultra-550b-a55b"
+                payload: dict = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2
+                }
+                if json_mode:
+                    payload["response_format"] = {"type": "json_object"}
+                    
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                    if response.status_code == 200:
+                        data = response.json()
+                        res = data["choices"][0]["message"]["content"]
+                        if res:
+                            current_nvidia_index = idx  # Keep this successful key active
+                            return res.strip()
+                    else:
+                        try:
+                            err_data = response.json()
+                            err_msg = err_data["error"]["message"]
+                            err_text = f"NVIDIA API Error ({response.status_code}): {err_msg}"
+                        except Exception:
+                            err_text = f"NVIDIA API Error ({response.status_code}): {response.text}"
+                        
+                        last_nvidia_err = Exception(err_text)
+                        print(f"[ROTATION] NVIDIA Key {idx+1}/{num_nvidia} failed: {err_text}. Rotating...", flush=True)
+            except Exception as e:
+                last_nvidia_err = e
+                print(f"[ROTATION] NVIDIA Key {idx+1}/{num_nvidia} error: {e}. Rotating...", flush=True)
+
+        current_nvidia_index = (current_nvidia_index + 1) % num_nvidia
+        
+        if last_nvidia_err and not openrouter_keys and not gemini_keys and not groq_keys:
+            raise last_nvidia_err
+
+    # Try OpenRouter keys with rotation
+    if openrouter_keys:
+        num_openrouter = len(openrouter_keys)
+        current_openrouter_index = current_openrouter_index % num_openrouter
+        last_openrouter_err = None
+        
+        for attempt in range(num_openrouter):
+            idx = (current_openrouter_index + attempt) % num_openrouter
+            or_key = openrouter_keys[idx]
+            try:
+                url = "https://openrouter.ai/api/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {or_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/JyotirmoyLaha/Scrapling",
+                    "X-Title": "Scrapling"
+                }
+                model_name = os.getenv("OPENROUTER_MODEL") or "nvidia/nemotron-3-ultra-550b-a55b"
+                payload: dict = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2
+                }
+                if json_mode:
+                    payload["response_format"] = {"type": "json_object"}
+                    
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                    if response.status_code == 200:
+                        data = response.json()
+                        res = data["choices"][0]["message"]["content"]
+                        if res:
+                            current_openrouter_index = idx  # Keep this successful key active
+                            return res.strip()
+                    else:
+                        try:
+                            err_data = response.json()
+                            err_msg = err_data["error"]["message"]
+                            err_text = f"OpenRouter API Error ({response.status_code}): {err_msg}"
+                        except Exception:
+                            err_text = f"OpenRouter API Error ({response.status_code}): {response.text}"
+                        
+                        last_openrouter_err = Exception(err_text)
+                        print(f"[ROTATION] OpenRouter Key {idx+1}/{num_openrouter} failed: {err_text}. Rotating...", flush=True)
+            except Exception as e:
+                last_openrouter_err = e
+                print(f"[ROTATION] OpenRouter Key {idx+1}/{num_openrouter} error: {e}. Rotating...", flush=True)
+
+        current_openrouter_index = (current_openrouter_index + 1) % num_openrouter
+        
+        if last_openrouter_err and not gemini_keys and not groq_keys:
+            raise last_openrouter_err
 
     # Try Gemini keys with rotation
     if gemini_keys:
@@ -759,7 +873,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
         if last_groq_err:
             raise last_groq_err
 
-    raise Exception("No active AI model keys configured. Please add GEMINI_API_KEY or GROQ_API_KEY to your .env file.")
+    raise Exception("No active AI model keys configured. Please add GEMINI_API_KEY, GROQ_API_KEY, NVIDIA_API_KEY, or OPENROUTER_API_KEY to your .env file.")
 
 @app.post("/api/chat")
 async def run_chat(req: ChatRequest):
