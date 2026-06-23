@@ -91,8 +91,12 @@ def load_env_file():
                         if line and not line.startswith("#") and "=" in line:
                             k, v = line.split("=", 1)
                             os.environ[k.strip()] = v.strip().strip('"').strip("'")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[ENV WARNING] Failed to read env file at {path}: {e}")
+
+# Initial environment load at server startup
+load_env_file()
+
 
 def offline_summarize(text: str, max_sentences: int = 5) -> str:
     import re
@@ -601,6 +605,149 @@ def delete_from_library(scrape_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class ChatRequest(BaseModel):
+    content: str
+    query: str
+    history: List[Dict[str, str]] = []
+
+class SchemaRequest(BaseModel):
+    content: str
+    schema_description: str
+
+class GraphRequest(BaseModel):
+    content: str
+
+async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
+    import os
+    import httpx
+    
+    load_env_file()
+    
+    # Try Gemini API
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+            headers = {"Content-Type": "application/json"}
+            payload: dict = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
+            if json_mode:
+                payload["generationConfig"] = {"responseMimeType": "application/json"}
+                
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    res = data["candidates"][0]["content"]["parts"][0]["text"]
+                    if res:
+                        return res.strip()
+        except Exception:
+            pass
+
+    # Try Groq API
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        try:
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {groq_key}",
+                "Content-Type": "application/json"
+            }
+            payload: dict = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2
+            }
+            if json_mode:
+                payload["response_format"] = {"type": "json_object"}
+                
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    res = data["choices"][0]["message"]["content"]
+                    if res:
+                        return res.strip()
+        except Exception:
+            pass
+
+    raise Exception("No active AI model keys configured. Please add GEMINI_API_KEY or GROQ_API_KEY to your .env file.")
+
+@app.post("/api/chat")
+async def run_chat(req: ChatRequest):
+    try:
+        context = f"You are a helpful research assistant. Answer questions about the following webpage content.\n\nWebpage Content:\n{req.content[:40000]}\n"
+        
+        history_str = ""
+        if req.history:
+            history_str = "\n".join(f"{h['role'].upper()}: {h['content']}" for h in req.history) + "\n"
+            
+        full_prompt = f"{context}\nConversational History:\n{history_str}USER: {req.query}\nASSISTANT:"
+        
+        reply = await async_query_llm(full_prompt)
+        return {"reply": reply}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/extract-schema")
+async def extract_schema(req: SchemaRequest):
+    import json
+    try:
+        prompt = (
+            "You are a data extraction bot. You must extract information from the provided webpage text "
+            "and format it as a valid JSON object matching the requested schema description.\n\n"
+            f"Requested Schema: {req.schema_description}\n\n"
+            "Format the output strictly as a JSON object. Ensure all extracted items are contained in a "
+            "top-level JSON key named 'extracted_data'.\n\n"
+            f"Webpage Content:\n{req.content[:40000]}"
+        )
+        
+        reply = await async_query_llm(prompt, json_mode=True)
+        parsed_json = json.loads(reply)
+        return parsed_json
+    except json.JSONDecodeError:
+        return {"extracted_data": reply, "error": "AI response was not valid JSON, returning raw text."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/knowledge-graph")
+async def extract_knowledge_graph(req: GraphRequest):
+    import json
+    try:
+        prompt = (
+            "Analyze the following webpage content and extract a knowledge graph representing the main "
+            "entities, concepts, topics, or organizations mentioned, and their relationships.\n\n"
+            "You MUST format the output as a valid JSON object with the following strict structure:\n"
+            "{\n"
+            "  \"nodes\": [\n"
+            "    { \"id\": \"unique_short_id\", \"label\": \"Display Label (e.g. Scrapling)\", \"type\": \"concept|org|tech|person|metric\" }\n"
+            "  ],\n"
+            "  \"edges\": [\n"
+            "    { \"from\": \"source_node_id\", \"to\": \"target_node_id\", \"label\": \"relationship type (e.g. bypasses)\" }\n"
+            "  ]\n"
+            "}\n\n"
+            "Limit the response to maximum 10-15 key nodes and their edges to keep the visualization clear.\n\n"
+            f"Webpage Content:\n{req.content[:40000]}"
+        )
+        
+        reply = await async_query_llm(prompt, json_mode=True)
+        parsed_json = json.loads(reply)
+        return parsed_json
+    except json.JSONDecodeError:
+        return {
+            "nodes": [
+                {"id": "1", "label": "Error", "type": "concept"},
+                {"id": "2", "label": "No Graph Data", "type": "concept"}
+            ],
+            "edges": [
+                {"from": "1", "to": "2", "label": "caused by JSON parse failure"}
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
+
