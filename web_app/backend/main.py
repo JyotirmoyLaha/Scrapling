@@ -17,6 +17,27 @@ from scrapling.fetchers import (
 )
 import database
 
+def clean_for_llm(content: str, max_chars: int = 15000) -> str:
+    if not content:
+        return ""
+    # If it is raw HTML, strip script, style, header, footer, nav tags and get plain text/markdown
+    if "<html" in content or "<body" in content or "<div" in content or "<p" in content:
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(content, "html.parser")
+            # Remove scripts, styles, metadata, header, footer and nav
+            for el in soup(["script", "style", "meta", "noscript", "header", "footer", "nav"]):
+                el.decompose()
+            content = soup.get_text(separator="\n")
+        except Exception:
+            pass
+            
+    # Normalize multiple newlines to max \n\n and multiple spaces to single space
+    import re
+    content = re.sub(r'\n\s*\n', '\n\n', content)
+    content = re.sub(r'[ \t]+', ' ', content)
+    return content[:max_chars].strip()
+
 def extract_content(page, css_selector: Optional[str], extraction_type: str) -> str:
     if css_selector:
         target_selector = page.css(css_selector)
@@ -97,6 +118,7 @@ async def extract_by_text(page, target_text: str, extraction_type: str) -> str:
         return target_text
 
     # 3. If no matching literal content is on the page, perform Semantic LLM-based extraction
+    cleaned_page_text = clean_for_llm(full_page_text, max_chars=15000)
     prompt = (
         "You are an expert semantic information extraction engine. Your task is to analyze the provided webpage content "
         "and extract specific paragraphs, lists, tables, or sections that are semantically relevant/related to the user's query.\n\n"
@@ -107,7 +129,7 @@ async def extract_by_text(page, target_text: str, extraction_type: str) -> str:
         "3. If there is relevant information, extract and return only the relevant sections/details from the page content. "
         "Do NOT include introductory phrases, conversational fillers, or external assumptions. Preserve the facts from the page.\n"
         f"4. Format the output as clean {extraction_type}.\n\n"
-        f"Webpage Content:\n{full_page_text[:45000]}"
+        f"Webpage Content:\n{cleaned_page_text}"
     )
     
     try:
@@ -131,14 +153,21 @@ def load_env_file():
     for path in env_paths:
         if os.path.exists(path):
             try:
+                loaded_keys = []
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#") and "=" in line:
                             k, v = line.split("=", 1)
-                            os.environ[k.strip()] = v.strip().strip('"').strip("'")
+                            key_name = k.strip()
+                            key_val = v.strip().strip('"').strip("'")
+                            os.environ[key_name] = key_val
+                            if "KEY" in key_name:
+                                masked = f"{key_val[:6]}...{key_val[-4:]}" if len(key_val) > 10 else "..."
+                                loaded_keys.append(f"{key_name}={masked}")
+                print(f"[ENV DEBUG] Successfully loaded env from: {os.path.abspath(path)}. Keys found: {loaded_keys}", flush=True)
             except Exception as e:
-                print(f"[ENV WARNING] Failed to read env file at {path}: {e}")
+                print(f"[ENV WARNING] Failed to read env file at {path}: {e}", flush=True)
 
 # Initial environment load at server startup
 load_env_file()
@@ -290,7 +319,7 @@ def offline_summarize(text: str, max_sentences: int = 5) -> str:
 
 async def generate_summary(text: str, max_sentences: int = 5) -> str:
     try:
-        truncated_text = text[:40000]
+        cleaned_text = clean_for_llm(text, max_chars=12000)
         prompt = (
             "You are an expert content brief engine. Please analyze the following scraped webpage content and generate "
             "a highly structured summary. The summary must be direct, informative, and free of generic web boilerplate "
@@ -306,7 +335,7 @@ async def generate_summary(text: str, max_sentences: int = 5) -> str:
             "- [Highlight point 5]\n\n"
             "### 🏷️ Main Topics\n"
             "#[Topic1] #[Topic2] #[Topic3]\n\n"
-            f"Webpage Content:\n{truncated_text}"
+            f"Webpage Content:\n{cleaned_text}"
         )
         return await async_query_llm(prompt)
     except Exception as e:
@@ -670,6 +699,8 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
     openrouter_env = os.getenv("OPENROUTER_API_KEYS") or os.getenv("OPENROUTER_API_KEY") or ""
     openrouter_keys = [k.strip() for k in openrouter_env.split(",") if k.strip()]
     
+    print(f"[LLM DEBUG] Active keys count: NVIDIA={len(nvidia_keys)}, OpenRouter={len(openrouter_keys)}, Gemini={len(gemini_keys)}, Groq={len(groq_keys)}", flush=True)
+
     if not gemini_keys and not groq_keys and not nvidia_keys and not openrouter_keys:
         raise Exception("No active AI model keys configured. Please add GEMINI_API_KEY, GROQ_API_KEY, NVIDIA_API_KEY, or OPENROUTER_API_KEY to your .env file.")
 
@@ -692,13 +723,14 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                 payload: dict = {
                     "model": model_name,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.2
+                    "temperature": 0.2,
+                    "max_tokens": 2048
                 }
                 if json_mode:
                     payload["response_format"] = {"type": "json_object"}
                     
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                    response = await client.post(url, json=payload, headers=headers, timeout=180.0)
                     if response.status_code == 200:
                         data = response.json()
                         res = data["choices"][0]["message"]["content"]
@@ -717,7 +749,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                         print(f"[ROTATION] NVIDIA Key {idx+1}/{num_nvidia} failed: {err_text}. Rotating...", flush=True)
             except Exception as e:
                 last_nvidia_err = e
-                print(f"[ROTATION] NVIDIA Key {idx+1}/{num_nvidia} error: {e}. Rotating...", flush=True)
+                print(f"[ROTATION] NVIDIA Key {idx+1}/{num_nvidia} error: {repr(e)}. Rotating...", flush=True)
 
         current_nvidia_index = (current_nvidia_index + 1) % num_nvidia
         
@@ -745,13 +777,14 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                 payload: dict = {
                     "model": model_name,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.2
+                    "temperature": 0.2,
+                    "max_tokens": 2048
                 }
                 if json_mode:
                     payload["response_format"] = {"type": "json_object"}
                     
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                    response = await client.post(url, json=payload, headers=headers, timeout=180.0)
                     if response.status_code == 200:
                         data = response.json()
                         res = data["choices"][0]["message"]["content"]
@@ -770,7 +803,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                         print(f"[ROTATION] OpenRouter Key {idx+1}/{num_openrouter} failed: {err_text}. Rotating...", flush=True)
             except Exception as e:
                 last_openrouter_err = e
-                print(f"[ROTATION] OpenRouter Key {idx+1}/{num_openrouter} error: {e}. Rotating...", flush=True)
+                print(f"[ROTATION] OpenRouter Key {idx+1}/{num_openrouter} error: {repr(e)}. Rotating...", flush=True)
 
         current_openrouter_index = (current_openrouter_index + 1) % num_openrouter
         
@@ -792,11 +825,13 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                 payload: dict = {
                     "contents": [{"parts": [{"text": prompt}]}]
                 }
+                gen_config: dict = {"maxOutputTokens": 2048}
                 if json_mode:
-                    payload["generationConfig"] = {"responseMimeType": "application/json"}
+                    gen_config["responseMimeType"] = "application/json"
+                payload["generationConfig"] = gen_config
                     
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                    response = await client.post(url, json=payload, headers=headers, timeout=180.0)
                     if response.status_code == 200:
                         data = response.json()
                         res = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -814,7 +849,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                         print(f"[ROTATION] Gemini Key {idx+1}/{num_gemini} failed: {err_text}. Rotating...", flush=True)
             except Exception as e:
                 last_gemini_err = e
-                print(f"[ROTATION] Gemini Key {idx+1}/{num_gemini} error: {e}. Rotating...", flush=True)
+                print(f"[ROTATION] Gemini Key {idx+1}/{num_gemini} error: {repr(e)}. Rotating...", flush=True)
 
         # Move to next key for the next overall call if all failed
         current_gemini_index = (current_gemini_index + 1) % num_gemini
@@ -840,13 +875,14 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                 payload: dict = {
                     "model": "llama-3.3-70b-versatile",
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.2
+                    "temperature": 0.2,
+                    "max_tokens": 2048
                 }
                 if json_mode:
                     payload["response_format"] = {"type": "json_object"}
                     
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                    response = await client.post(url, json=payload, headers=headers, timeout=180.0)
                     if response.status_code == 200:
                         data = response.json()
                         res = data["choices"][0]["message"]["content"]
@@ -865,7 +901,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                         print(f"[ROTATION] Groq Key {idx+1}/{num_groq} failed: {err_text}. Rotating...", flush=True)
             except Exception as e:
                 last_groq_err = e
-                print(f"[ROTATION] Groq Key {idx+1}/{num_groq} error: {e}. Rotating...", flush=True)
+                print(f"[ROTATION] Groq Key {idx+1}/{num_groq} error: {repr(e)}. Rotating...", flush=True)
 
         # Move to next key for the next overall call if all failed
         current_groq_index = (current_groq_index + 1) % num_groq
@@ -878,7 +914,8 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
 @app.post("/api/chat")
 async def run_chat(req: ChatRequest):
     try:
-        context = f"You are a helpful research assistant. Answer questions about the following webpage content.\n\nWebpage Content:\n{req.content[:40000]}\n"
+        cleaned_content = clean_for_llm(req.content, max_chars=15000)
+        context = f"You are a helpful research assistant. Answer questions about the following webpage content.\n\nWebpage Content:\n{cleaned_content}\n"
         
         history_str = ""
         if req.history:
@@ -890,18 +927,19 @@ async def run_chat(req: ChatRequest):
         return {"reply": reply}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+ 
 @app.post("/api/extract-schema")
 async def extract_schema(req: SchemaRequest):
     import json
     try:
+        cleaned_content = clean_for_llm(req.content, max_chars=15000)
         prompt = (
             "You are a data extraction bot. You must extract information from the provided webpage text "
             "and format it as a valid JSON object matching the requested schema description.\n\n"
             f"Requested Schema: {req.schema_description}\n\n"
             "Format the output strictly as a JSON object. Ensure all extracted items are contained in a "
             "top-level JSON key named 'extracted_data'.\n\n"
-            f"Webpage Content:\n{req.content[:40000]}"
+            f"Webpage Content:\n{cleaned_content}"
         )
         
         reply = await async_query_llm(prompt, json_mode=True)
@@ -911,11 +949,12 @@ async def extract_schema(req: SchemaRequest):
         return {"extracted_data": reply, "error": "AI response was not valid JSON, returning raw text."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+ 
 @app.post("/api/knowledge-graph")
 async def extract_knowledge_graph(req: GraphRequest):
     import json
     try:
+        cleaned_content = clean_for_llm(req.content, max_chars=12000)
         prompt = (
             "Analyze the following webpage content and extract a knowledge graph representing the main "
             "entities, concepts, topics, or organizations mentioned, and their relationships.\n\n"
@@ -929,7 +968,7 @@ async def extract_knowledge_graph(req: GraphRequest):
             "  ]\n"
             "}\n\n"
             "Limit the response to maximum 10-15 key nodes and their edges to keep the visualization clear.\n\n"
-            f"Webpage Content:\n{req.content[:40000]}"
+            f"Webpage Content:\n{cleaned_content}"
         )
         
         reply = await async_query_llm(prompt, json_mode=True)
