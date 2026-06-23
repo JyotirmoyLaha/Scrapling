@@ -110,3 +110,5 @@ docs/_build
 web/
 .scrapling_dependencies_installed
 
+# Backend environment keys
+web_app/backend/.env
