@@ -1,6 +1,71 @@
 import React, { useState, useEffect } from 'react';
 import { FingerprintVisualizer } from './PremiumAddons';
 
+const parseBoldText = (text) => {
+  if (!text) return '';
+  const parts = text.split(/\*\*([^*]+)\*\*/g);
+  return parts.map((part, i) => i % 2 === 1 ? <strong key={i} style={{ color: 'var(--secondary)', fontWeight: '600' }}>{part}</strong> : part);
+};
+
+const renderMarkdown = (text) => {
+  if (!text) return null;
+  
+  const lines = text.split('\n');
+  return lines.map((line, idx) => {
+    const trimmed = line.trim();
+    
+    // Headers
+    if (trimmed.startsWith('### ')) {
+      return (
+        <h4 key={idx} style={{ color: 'var(--primary)', marginTop: '1.5rem', marginBottom: '0.8rem', borderBottom: '1px solid var(--card-border)', paddingBottom: '0.4rem', fontWeight: '600', fontSize: '1.1rem' }}>
+          {trimmed.replace('### ', '')}
+        </h4>
+      );
+    }
+    if (trimmed.startsWith('## ')) {
+      return (
+        <h3 key={idx} style={{ color: 'var(--secondary)', marginTop: '1.5rem', marginBottom: '0.8rem', fontWeight: '600' }}>
+          {trimmed.replace('## ', '')}
+        </h3>
+      );
+    }
+    
+    // Bullet points
+    if (trimmed.startsWith('•') || trimmed.startsWith('-') || trimmed.startsWith('*')) {
+      const content = trimmed.substring(1).trim();
+      return (
+        <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem', marginBottom: '0.6rem', paddingLeft: '0.5rem' }}>
+          <span style={{ color: 'var(--primary)', fontWeight: 'bold', fontSize: '1.1rem', lineHeight: '1.2' }}>•</span>
+          <span style={{ color: 'var(--text-main)', flex: 1 }}>{parseBoldText(content)}</span>
+        </div>
+      );
+    }
+    
+    // Hashtags / Topics inline styling
+    if (trimmed.startsWith('#')) {
+      const tags = trimmed.split(/\s+/).filter(t => t.startsWith('#'));
+      if (tags.length > 0) {
+        return (
+          <div key={idx} style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', marginTop: '0.8rem', marginBottom: '0.8rem' }}>
+            {tags.map((tag, tIdx) => (
+              <span key={tIdx} style={{ background: 'rgba(0, 180, 252, 0.08)', color: 'var(--secondary)', border: '1px solid rgba(0, 180, 252, 0.2)', padding: '0.25rem 0.65rem', borderRadius: '6px', fontSize: '0.8rem', fontWeight: '600', letterSpacing: '0.2px' }}>
+                {tag}
+              </span>
+            ))}
+          </div>
+        );
+      }
+    }
+    
+    // Default paragraphs
+    return trimmed ? (
+      <p key={idx} style={{ marginBottom: '0.8rem', color: 'var(--text-muted)', lineHeight: '1.6', fontSize: '0.95rem' }}>
+        {parseBoldText(trimmed)}
+      </p>
+    ) : <div key={idx} style={{ height: '0.4rem' }} />;
+  });
+};
+
 export default function Scraper({ defaultUrl, setDefaultUrl }) {
   const [url, setUrl] = useState(defaultUrl || '');
   const [fetcherType, setFetcherType] = useState('stealthy');
@@ -350,11 +415,20 @@ export default function Scraper({ defaultUrl, setDefaultUrl }) {
             )}
 
             {activeResultTab === 'summary' && result && (
-              <div>
-                <h3 style={{ color: 'var(--primary)', marginBottom: '1rem' }}>Extract Summary Brief</h3>
-                <pre style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', fontSize: '1.05rem', fontFamily: 'inherit', color: 'var(--text-main)', background: 'rgba(9, 10, 14, 0.4)' }}>
-                  {result.summary}
-                </pre>
+              <div style={{ padding: '1.5rem', background: 'rgba(9, 10, 14, 0.3)', borderRadius: '12px', border: '1px solid var(--card-border)' }}>
+                <h3 style={{ color: 'var(--primary)', marginBottom: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.6rem', borderBottom: '1px solid var(--card-border)', paddingBottom: '0.8rem' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--primary)' }}>
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                  </svg>
+                  Extract Summary Brief
+                </h3>
+                <div style={{ color: 'var(--text-main)' }}>
+                  {renderMarkdown(result.summary)}
+                </div>
               </div>
             )}
 
