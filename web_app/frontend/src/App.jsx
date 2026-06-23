@@ -45,14 +45,29 @@ function App() {
             height="32" 
             viewBox="0 0 24 24" 
             fill="none" 
-            stroke="#00b4fc" 
-            strokeWidth="2.5" 
+            stroke="url(#brand-gradient)" 
+            strokeWidth="2" 
             strokeLinecap="round" 
             strokeLinejoin="round"
           >
-            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+            <defs>
+              <linearGradient id="brand-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#ff2a5f" />
+                <stop offset="100%" stopColor="#00b4fc" />
+              </linearGradient>
+            </defs>
+            <path d="M12 2L2 7v10l10 5 10-5V7L12 2z" strokeWidth="2" opacity="0.85" />
+            <path d="M12 22V12M12 12L7 8M12 12l5-4" strokeWidth="2" />
+            <circle cx="12" cy="12" r="2.5" fill="#ff2a5f" />
           </svg>
-          <span className="brand-logo">Scrapling<span className="cursor-dot">_</span></span>
+          <span className="brand-logo">
+            {"Scrapling".split("").map((char, index) => (
+              <span key={index} style={{ "--index": index }} className="logo-letter">
+                {char}
+              </span>
+            ))}
+            <span className="cursor-dot">_</span>
+          </span>
         </div>
 
         <ul className="nav-links">
