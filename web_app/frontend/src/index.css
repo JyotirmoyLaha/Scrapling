@@ -591,3 +591,17 @@ pre {
   background: var(--primary);
   color: #ffffff;
 }
+
+.nav-control-btn {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.nav-control-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: var(--secondary) !important;
+  box-shadow: 0 0 10px rgba(0, 180, 252, 0.2);
+}
+
+.nav-control-btn:active {
+  transform: scale(0.92);
+}
