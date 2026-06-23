@@ -40,7 +40,17 @@ Use this section when you have a specific website link (URL) and want to pull te
 #### **Action Buttons & Output Tabs:**
 *   **Scrape Content**: Downloads the page's text (or targeted text) and populates three output tabs:
     *   **Extracted Content**: Displays the full downloaded text or Markdown.
-    *   **Brief Summary**: Displays a clean, extractive bullet-point summary of the whole scraped text, making it easy to understand long pages instantly.
+    *   **Brief Summary**: Displays a beautifully formatted content briefing of the scraped text. It automatically filters out web boilerplate (headers, footers, logins, cookies) and extracts the most informative sections.
+        *   **Local NLP Ranker**: The default offline engine uses a keyword-density scoring model with lead bias and redundancy reduction to select key highlights and core themes.
+        *   **AI-Powered Summaries (Optional)**: You can upgrade this to an advanced AI brief. Simply create a file named `.env` in the `web_app/backend/` folder and add your Gemini or Groq API Key:
+            ```env
+            # To use Google Gemini:
+            GEMINI_API_KEY=your_actual_gemini_key_here
+
+            # OR to use Groq (Llama-3.3-70b):
+            GROQ_API_KEY=your_actual_groq_key_here
+            ```
+            Once configured, Scrapling will automatically query your chosen AI service to generate a professional Executive Brief, Key Highlights, and Main Topic tags.
     *   **Raw Response**: Displays the raw JSON metadata returned from the server.
 *   **Capture Screenshot**: Takes a screenshot of the entire webpage (or just the targeted text element area) and displays it in the **Live Screenshot** tab.
 
