@@ -74,58 +74,269 @@ def extract_by_text(page, target_text: str, extraction_type: str) -> str:
     else:
         return best_sel.get()
 
-def generate_summary(text: str, max_sentences: int = 5) -> str:
+def load_env_file():
+    import os
+    # Check multiple possible paths for .env
+    env_paths = [
+        os.path.join(os.path.dirname(__file__), ".env"),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"),
+        ".env"
+    ]
+    for path in env_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            os.environ[k.strip()] = v.strip().strip('"').strip("'")
+            except Exception:
+                pass
+
+def offline_summarize(text: str, max_sentences: int = 5) -> str:
     import re
+    import math
     from collections import Counter
+
     if not text or len(text.strip()) < 10:
         return "No content available to summarize."
-        
-    # Clean markdown and spacing
-    clean_text = re.sub(r'[#\*\[\]\(\)`-]', ' ', text)
-    clean_text = re.sub(r'\s+', ' ', clean_text)
-    
-    # Split into sentences using a robust regex pattern
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    # Filter empty or tiny sentences
-    sentences = [s for s in sentences if len(s.strip()) > 3]
-    
-    if len(sentences) <= max_sentences:
-        return "\n".join([f"• {s}" for s in sentences if s.strip()])
-        
-    # Extract terms and frequencies
-    words = re.findall(r'\b\w+\b', clean_text.lower())
-    stop_words = {
+
+    # Robust list of stop words
+    STOP_WORDS = {
         'the', 'a', 'an', 'and', 'but', 'or', 'for', 'nor', 'on', 'at', 'in', 'of', 'to', 'is', 'are', 'was', 'were', 
         'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'this', 'that', 'these', 'those', 'it', 
         'its', 'they', 'them', 'their', 'he', 'him', 'his', 'she', 'her', 'we', 'us', 'our', 'you', 'your', 'i', 
         'me', 'my', 'with', 'from', 'by', 'as', 'about', 'into', 'through', 'over', 'after', 'before', 'will', 'would',
-        'can', 'could', 'should', 'may', 'might', 'must', 'just', 'more', 'some', 'other', 'any'
+        'can', 'could', 'should', 'may', 'might', 'must', 'just', 'more', 'some', 'other', 'any', 'here', 'there',
+        'when', 'where', 'why', 'how', 'all', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no',
+        'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'don', 'now', 'click', 'read',
+        'view', 'web', 'page', 'site', 'website', 'link', 'go', 'get', 'please', 'use', 'login', 'sign', 'user', 'cookies'
     }
-    filtered_words = [w for w in words if w not in stop_words and len(w) > 2]
+
+    # Clean text lines and filter out obvious boilerplate/navigation lines
+    lines = text.split('\n')
+    cleaned_lines = []
     
-    if not filtered_words:
-        return "\n".join([f"• {s}" for s in sentences[:max_sentences]])
-        
-    word_freq = Counter(filtered_words)
+    boilerplate_keywords = [
+        'sign in', 'log in', 'create account', 'forgot password', 'privacy policy', 
+        'terms of service', 'cookie policy', 'all rights reserved', 'copyright ©', 
+        'powered by', 'share on', 'facebook', 'twitter', 'linkedin', 'instagram',
+        'accept cookies', 'subscribe to', 'mailing list', 'newsletter'
+    ]
     
-    # Score sentences based on word frequency
-    sentence_scores = {}
-    for idx, sentence in enumerate(sentences):
-        s_words = re.findall(r'\b\w+\b', sentence.lower())
-        if len(s_words) < 5:
+    for line in lines:
+        line_strip = line.strip()
+        if not line_strip:
             continue
-        score = sum(word_freq[w] for w in s_words if w in word_freq)
-        sentence_scores[idx] = score / len(s_words)
+            
+        line_lower = line_strip.lower()
+        if any(keyword in line_lower for keyword in boilerplate_keywords):
+            continue
+            
+        line_clean = re.sub(r'[#\*\[\]\(\)`_-]', ' ', line_strip)
+        line_clean = re.sub(r'\s+', ' ', line_clean).strip()
         
-    if not sentence_scores:
-        return "\n".join([f"• {s}" for s in sentences[:max_sentences]])
-        
-    # Get top sentences
-    top_indices = sorted(sentence_scores, key=lambda idx: sentence_scores[idx], reverse=True)[:max_sentences]
-    top_indices.sort()
+        # Split line into sentences
+        sub_sentences = re.split(r'(?<=[.!?])\s+', line_clean)
+        for s in sub_sentences:
+            s = s.strip()
+            if len(s) > 15:  # Minimum character length
+                cleaned_lines.append(s)
+
+    # Filter candidates by length
+    candidates = []
+    for s in cleaned_lines:
+        words = re.findall(r'\b\w+\b', s.lower())
+        if 6 <= len(words) <= 45:
+            candidates.append((s, words))
+
+    if not candidates:
+        simple_sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        simple_sentences = [s.strip() for s in simple_sentences if len(s.strip()) > 10]
+        if not simple_sentences:
+            return "No readable content available to summarize."
+        return "\n".join([f"• {s}" for s in simple_sentences[:max_sentences]])
+
+    # Count word frequencies for content words
+    all_content_words = []
+    for _, words in candidates:
+        all_content_words.extend([w for w in words if w not in STOP_WORDS and len(w) > 2])
+
+    if not all_content_words:
+        return "\n".join([f"• {c[0]}" for c in candidates[:max_sentences]])
+
+    word_freq = Counter(all_content_words)
+
+    # Score candidates
+    scored_candidates = []
+    total_candidates = len(candidates)
     
-    summary_sentences = [sentences[idx].strip() for idx in top_indices]
-    return "\n".join([f"• {s}" for s in summary_sentences])
+    for idx, (sentence, words) in enumerate(candidates):
+        content_words = [w for w in words if w in word_freq]
+        if not content_words:
+            continue
+            
+        unique_content = set(content_words)
+        freq_sum = sum(word_freq[w] for w in unique_content)
+        
+        # Length normalization: soft penalty for length using math.pow(len, 0.55)
+        len_norm = math.pow(len(words), 0.55)
+        score = freq_sum / len_norm
+        
+        # Position weight (Lead bias): boost sentences at the beginning of the text
+        position_factor = 1.35 - 0.35 * (idx / total_candidates)
+        score *= position_factor
+        
+        scored_candidates.append({
+            'index': idx,
+            'sentence': sentence,
+            'words': words,
+            'content_words': unique_content,
+            'score': score
+        })
+
+    # Sort by score descending
+    scored_candidates.sort(key=lambda x: x['score'], reverse=True)
+
+    # Select sentences with Jaccard-based redundancy check
+    selected = []
+    for item in scored_candidates:
+        if len(selected) >= max_sentences:
+            break
+            
+        is_redundant = False
+        for sel in selected:
+            intersection = len(item['content_words'] & sel['content_words'])
+            union = len(item['content_words'] | sel['content_words'])
+            jaccard = intersection / union if union > 0 else 0
+            if jaccard > 0.30:  # Similarity threshold
+                is_redundant = True
+                break
+                
+        if not is_redundant:
+            selected.append(item)
+
+    if not selected:
+        selected = scored_candidates[:max_sentences]
+
+    # Sort back by original index to keep narrative flow
+    selected.sort(key=lambda x: x['index'])
+
+    highlights = [f"• {item['sentence']}" for item in selected]
+    
+    # Extract top keywords
+    top_keywords = [pair[0] for pair in word_freq.most_common(5)]
+    themes_str = ", ".join([f"#{kw}" for kw in top_keywords])
+    
+    summary_parts = [
+        "### 📌 Key Highlights",
+        "\n".join(highlights)
+    ]
+    if top_keywords:
+        summary_parts.append(f"### 🔑 Core Themes\n{themes_str}")
+        
+    return "\n\n".join(summary_parts)
+
+async def generate_summary(text: str, max_sentences: int = 5) -> str:
+    import os
+    import httpx
+    
+    # Load local .env files
+    load_env_file()
+    
+    # Try Gemini API
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            truncated_text = text[:40000] # Limit to avoid token limits
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+            headers = {"Content-Type": "application/json"}
+            prompt = (
+                "You are an expert content brief engine. Please analyze the following scraped webpage content and generate "
+                "a highly structured summary. The summary must be direct, informative, and free of generic web boilerplate "
+                "(such as headers/footers, logins, or cookie consent banners).\n\n"
+                "Format your response in Markdown as follows:\n"
+                "### 📌 Executive Brief\n"
+                "[A concise, engaging 2-3 sentence overview of the page's main topic and purpose]\n\n"
+                "### 🔑 Key Highlights\n"
+                "- [Highlight point 1]\n"
+                "- [Highlight point 2]\n"
+                "- [Highlight point 3]\n"
+                "- [Highlight point 4]\n"
+                "- [Highlight point 5]\n\n"
+                "### 🏷️ Main Topics\n"
+                "#[Topic1] #[Topic2] #[Topic3]\n\n"
+                f"Webpage Content:\n{truncated_text}"
+            )
+            payload = {
+                "contents": [{
+                    "parts": [{
+                        "text": prompt
+                    }]
+                }]
+            }
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=12.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    try:
+                        summary_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                        if summary_text and len(summary_text.strip()) > 30:
+                            return summary_text.strip()
+                    except (KeyError, IndexError):
+                        pass
+        except Exception:
+            pass
+
+    # Try Groq API
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        try:
+            truncated_text = text[:40000]
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {groq_key}",
+                "Content-Type": "application/json"
+            }
+            prompt = (
+                "You are an expert content brief engine. Please analyze the following scraped webpage content and generate "
+                "a highly structured summary. The summary must be direct, informative, and free of generic web boilerplate "
+                "(such as headers/footers, logins, or cookie consent banners).\n\n"
+                "Format your response in Markdown as follows:\n"
+                "### 📌 Executive Brief\n"
+                "[A concise, engaging 2-3 sentence overview of the page's main topic and purpose]\n\n"
+                "### 🔑 Key Highlights\n"
+                "- [Highlight point 1]\n"
+                "- [Highlight point 2]\n"
+                "- [Highlight point 3]\n"
+                "- [Highlight point 4]\n"
+                "- [Highlight point 5]\n\n"
+                "### 🏷️ Main Topics\n"
+                "#[Topic1] #[Topic2] #[Topic3]\n\n"
+                f"Webpage Content:\n{truncated_text}"
+            )
+            payload = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.2
+            }
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, json=payload, headers=headers, timeout=12.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    try:
+                        summary_text = data["choices"][0]["message"]["content"]
+                        if summary_text and len(summary_text.strip()) > 30:
+                            return summary_text.strip()
+                    except (KeyError, IndexError):
+                        pass
+        except Exception:
+            pass
+
+    return offline_summarize(text, max_sentences)
 
 from contextlib import asynccontextmanager
 
@@ -251,7 +462,7 @@ async def run_scrape(req: ScrapeRequest):
         if req.save_to_library:
             database.save_scrape(req.url, title, content, req.extraction_type)
 
-        summary = generate_summary(content)
+        summary = await generate_summary(content)
         return {
             "status": page.status,
             "url": page.url,
@@ -358,7 +569,7 @@ async def session_fetch(session_id: str, req: SessionFetchRequest):
         
         content = extract_content(page, req.css_selector, req.extraction_type)
 
-        summary = generate_summary(content)
+        summary = await generate_summary(content)
         return {
             "status": page.status,
             "url": page.url,
