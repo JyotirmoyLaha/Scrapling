@@ -48,31 +48,77 @@ def escape_xpath_literal(s: str) -> str:
     concatted = ", \"'\", ".join(f"'{p}'" for p in parts)
     return f"concat({concatted})"
 
-def extract_by_text(page, target_text: str, extraction_type: str) -> str:
-    xpath_literal = escape_xpath_literal(target_text)
-    selectors = page.xpath(f"//*[contains(text(), {xpath_literal})]")
-    if not selectors:
-        selectors = page.xpath(f"//*[contains(., {xpath_literal})]")
+def normalize_spaces(text: str) -> str:
+    import re
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+async def extract_by_text(page, target_text: str, extraction_type: str) -> str:
+    # 1. Normalize query
+    norm_target = normalize_spaces(target_text)
+    if not norm_target:
+        return "Target text is empty."
+
+    # 2. Check if the page content actually contains the target text (ignoring whitespace differences)
+    full_page_text = page.get_all_text(strip=True) if hasattr(page, "get_all_text") else page.html_content
+    norm_page = normalize_spaces(full_page_text)
+    
+    if norm_target in norm_page:
+        # Traverse elements to find the most specific one containing the target text
+        candidates = []
+        for el in page.css("*"):
+            try:
+                el_text = el.get_all_text(strip=True)
+                if el_text:
+                    norm_el_text = normalize_spaces(el_text)
+                    if norm_target in norm_el_text:
+                        candidates.append((len(norm_el_text), el))
+            except Exception:
+                pass
+                
+        if candidates:
+            # Sort by text length ascending to get the smallest leaf element
+            candidates.sort(key=lambda x: x[0])
+            best_len, best_el = candidates[0]
+            try:
+                if extraction_type == "markdown":
+                    val = markdownify(best_el.get())
+                elif extraction_type == "text":
+                    val = best_el.get_all_text(strip=True)
+                else:
+                    val = best_el.get()
+                if val.strip():
+                    return val.strip()
+            except Exception:
+                pass
         
-    if not selectors:
-        return f"Text '{target_text}' not found on the page."
-        
-    # Find the most specific (shortest HTML) element containing the text
-    best_sel = selectors[0]
-    for sel in selectors:
-        try:
-            html_content = sel.get()
-            if html_content and len(html_content) < len(best_sel.get()):
-                best_sel = sel
-        except Exception:
-            pass
-            
-    if extraction_type == "markdown":
-        return markdownify(best_sel.get())
-    elif extraction_type == "text":
-        return best_sel.get_all_text(strip=True)
-    else:
-        return best_sel.get()
+        # If element retrieval failed, return the target text directly since we know it exists
+        return target_text
+
+    # 3. If no matching literal content is on the page, perform Semantic LLM-based extraction
+    prompt = (
+        "You are an expert semantic information extraction engine. Your task is to analyze the provided webpage content "
+        "and extract specific paragraphs, lists, tables, or sections that are semantically relevant/related to the user's query.\n\n"
+        f"User Query/Topic: \"{target_text}\"\n\n"
+        "Instructions:\n"
+        "1. Check if the webpage contains information related to the context or event of the User Query/Topic.\n"
+        "2. If there is NO relevant or related information at all, output exactly: NOT_FOUND\n"
+        "3. If there is relevant information, extract and return only the relevant sections/details from the page content. "
+        "Do NOT include introductory phrases, conversational fillers, or external assumptions. Preserve the facts from the page.\n"
+        f"4. Format the output as clean {extraction_type}.\n\n"
+        f"Webpage Content:\n{full_page_text[:45000]}"
+    )
+    
+    try:
+        reply = await async_query_llm(prompt)
+        reply_strip = reply.strip()
+        if "NOT_FOUND" in reply_strip or len(reply_strip) < 10:
+            return f"Text context '{target_text}' not found on the page."
+        return reply_strip
+    except Exception as e:
+        print(f"[SEMANTIC EXTRACTION WARNING]: {e}")
+        return f"Text context '{target_text}' not found on the page."
 
 def load_env_file():
     import os
@@ -243,104 +289,29 @@ def offline_summarize(text: str, max_sentences: int = 5) -> str:
     return "\n\n".join(summary_parts)
 
 async def generate_summary(text: str, max_sentences: int = 5) -> str:
-    import os
-    import httpx
-    
-    # Load local .env files
-    load_env_file()
-    
-    # Try Gemini API
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if gemini_key:
-        try:
-            truncated_text = text[:40000] # Limit to avoid token limits
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
-            headers = {"Content-Type": "application/json"}
-            prompt = (
-                "You are an expert content brief engine. Please analyze the following scraped webpage content and generate "
-                "a highly structured summary. The summary must be direct, informative, and free of generic web boilerplate "
-                "(such as headers/footers, logins, or cookie consent banners).\n\n"
-                "Format your response in Markdown as follows:\n"
-                "### 📌 Executive Brief\n"
-                "[A concise, engaging 2-3 sentence overview of the page's main topic and purpose]\n\n"
-                "### 🔑 Key Highlights\n"
-                "- [Highlight point 1]\n"
-                "- [Highlight point 2]\n"
-                "- [Highlight point 3]\n"
-                "- [Highlight point 4]\n"
-                "- [Highlight point 5]\n\n"
-                "### 🏷️ Main Topics\n"
-                "#[Topic1] #[Topic2] #[Topic3]\n\n"
-                f"Webpage Content:\n{truncated_text}"
-            )
-            payload = {
-                "contents": [{
-                    "parts": [{
-                        "text": prompt
-                    }]
-                }]
-            }
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, json=payload, headers=headers, timeout=12.0)
-                if response.status_code == 200:
-                    data = response.json()
-                    try:
-                        summary_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                        if summary_text and len(summary_text.strip()) > 30:
-                            return summary_text.strip()
-                    except (KeyError, IndexError):
-                        pass
-        except Exception:
-            pass
-
-    # Try Groq API
-    groq_key = os.getenv("GROQ_API_KEY")
-    if groq_key:
-        try:
-            truncated_text = text[:40000]
-            url = "https://api.groq.com/openai/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {groq_key}",
-                "Content-Type": "application/json"
-            }
-            prompt = (
-                "You are an expert content brief engine. Please analyze the following scraped webpage content and generate "
-                "a highly structured summary. The summary must be direct, informative, and free of generic web boilerplate "
-                "(such as headers/footers, logins, or cookie consent banners).\n\n"
-                "Format your response in Markdown as follows:\n"
-                "### 📌 Executive Brief\n"
-                "[A concise, engaging 2-3 sentence overview of the page's main topic and purpose]\n\n"
-                "### 🔑 Key Highlights\n"
-                "- [Highlight point 1]\n"
-                "- [Highlight point 2]\n"
-                "- [Highlight point 3]\n"
-                "- [Highlight point 4]\n"
-                "- [Highlight point 5]\n\n"
-                "### 🏷️ Main Topics\n"
-                "#[Topic1] #[Topic2] #[Topic3]\n\n"
-                f"Webpage Content:\n{truncated_text}"
-            )
-            payload = {
-                "model": "llama-3.3-70b-versatile",
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.2
-            }
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, json=payload, headers=headers, timeout=12.0)
-                if response.status_code == 200:
-                    data = response.json()
-                    try:
-                        summary_text = data["choices"][0]["message"]["content"]
-                        if summary_text and len(summary_text.strip()) > 30:
-                            return summary_text.strip()
-                    except (KeyError, IndexError):
-                        pass
-        except Exception:
-            pass
-
-    return offline_summarize(text, max_sentences)
+    try:
+        truncated_text = text[:40000]
+        prompt = (
+            "You are an expert content brief engine. Please analyze the following scraped webpage content and generate "
+            "a highly structured summary. The summary must be direct, informative, and free of generic web boilerplate "
+            "(such as headers/footers, logins, or cookie consent banners).\n\n"
+            "Format your response in Markdown as follows:\n"
+            "### 📌 Executive Brief\n"
+            "[A concise, engaging 2-3 sentence overview of the page's main topic and purpose]\n\n"
+            "### 🔑 Key Highlights\n"
+            "- [Highlight point 1]\n"
+            "- [Highlight point 2]\n"
+            "- [Highlight point 3]\n"
+            "- [Highlight point 4]\n"
+            "- [Highlight point 5]\n\n"
+            "### 🏷️ Main Topics\n"
+            "#[Topic1] #[Topic2] #[Topic3]\n\n"
+            f"Webpage Content:\n{truncated_text}"
+        )
+        return await async_query_llm(prompt)
+    except Exception as e:
+        print(f"[SUMMARY WARNING] Live summary generation failed (using offline fallback): {e}")
+        return offline_summarize(text, max_sentences)
 
 from contextlib import asynccontextmanager
 
@@ -457,7 +428,7 @@ async def run_scrape(req: ScrapeRequest):
             page = await AsyncFetcher.get(req.url)
 
         if req.target_text:
-            content = extract_by_text(page, req.target_text, req.extraction_type)
+            content = await extract_by_text(page, req.target_text, req.extraction_type)
         else:
             content = extract_content(page, req.css_selector, req.extraction_type)
 
@@ -466,14 +437,24 @@ async def run_scrape(req: ScrapeRequest):
         if req.save_to_library:
             database.save_scrape(req.url, title, content, req.extraction_type)
 
-        summary = await generate_summary(content)
         return {
             "status": page.status,
             "url": page.url,
             "title": title,
             "content": content,
-            "summary": summary
+            "summary": ""
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SummarizeRequest(BaseModel):
+    content: str
+
+@app.post("/api/summarize")
+async def run_summarize(req: SummarizeRequest):
+    try:
+        summary = await generate_summary(req.content)
+        return {"summary": summary}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -572,14 +553,58 @@ async def session_fetch(session_id: str, req: SessionFetchRequest):
         page = await session.fetch(req.url, google_search=req.google_search)
         
         content = extract_content(page, req.css_selector, req.extraction_type)
-
         summary = await generate_summary(content)
+
+        # Extract links automatically
+        links = []
+        seen_urls = set()
+        for link_elem in page.css("a"):
+            try:
+                href = link_elem.attrib.get("href")
+                if href:
+                    from urllib.parse import urljoin
+                    absolute_url = urljoin(page.url, href)
+                    if absolute_url not in seen_urls and absolute_url.startswith(("http://", "https://")):
+                        text = link_elem.get_all_text(strip=True)
+                        if not text:
+                            text = absolute_url
+                        links.append({
+                            "text": text,
+                            "url": absolute_url
+                        })
+                        seen_urls.add(absolute_url)
+            except Exception:
+                pass
+
+        # Extract outline sections
+        sections = []
+        for h in page.css("h1, h2, h3"):
+            try:
+                text = h.get_all_text(strip=True)
+                if text and len(text) > 2:
+                    h_html = h.get().lower()
+                    tag = "H"
+                    if h_html.startswith("<h1"):
+                        tag = "H1"
+                    elif h_html.startswith("<h2"):
+                        tag = "H2"
+                    elif h_html.startswith("<h3"):
+                        tag = "H3"
+                    sections.append({
+                        "text": text,
+                        "tag": tag
+                      })
+            except Exception:
+                pass
+
         return {
             "status": page.status,
             "url": page.url,
             "title": page.css("title::text").get() or "Scraped Page",
             "content": content,
-            "summary": summary
+            "summary": summary,
+            "links": links[:120],
+            "sections": sections[:60]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -617,60 +642,122 @@ class SchemaRequest(BaseModel):
 class GraphRequest(BaseModel):
     content: str
 
+current_gemini_index = 0
+current_groq_index = 0
+
 async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
+    global current_gemini_index, current_groq_index
     import os
     import httpx
     
     load_env_file()
     
-    # Try Gemini API
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if gemini_key:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
-            headers = {"Content-Type": "application/json"}
-            payload: dict = {
-                "contents": [{"parts": [{"text": prompt}]}]
-            }
-            if json_mode:
-                payload["generationConfig"] = {"responseMimeType": "application/json"}
-                
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, json=payload, headers=headers, timeout=20.0)
-                if response.status_code == 200:
-                    data = response.json()
-                    res = data["candidates"][0]["content"]["parts"][0]["text"]
-                    if res:
-                        return res.strip()
-        except Exception:
-            pass
+    # Load and split Gemini keys (support comma-separated)
+    gemini_env = os.getenv("GEMINI_API_KEYS") or os.getenv("GEMINI_API_KEY") or ""
+    gemini_keys = [k.strip() for k in gemini_env.split(",") if k.strip()]
+    
+    # Load and split Groq keys (support comma-separated)
+    groq_env = os.getenv("GROQ_API_KEYS") or os.getenv("GROQ_API_KEY") or ""
+    groq_keys = [k.strip() for k in groq_env.split(",") if k.strip()]
+    
+    if not gemini_keys and not groq_keys:
+        raise Exception("No active AI model keys configured. Please add GEMINI_API_KEY or GROQ_API_KEY to your .env file.")
 
-    # Try Groq API
-    groq_key = os.getenv("GROQ_API_KEY")
-    if groq_key:
-        try:
-            url = "https://api.groq.com/openai/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {groq_key}",
-                "Content-Type": "application/json"
-            }
-            payload: dict = {
-                "model": "llama-3.3-70b-versatile",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2
-            }
-            if json_mode:
-                payload["response_format"] = {"type": "json_object"}
-                
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, json=payload, headers=headers, timeout=20.0)
-                if response.status_code == 200:
-                    data = response.json()
-                    res = data["choices"][0]["message"]["content"]
-                    if res:
-                        return res.strip()
-        except Exception:
-            pass
+    # Try Gemini keys with rotation
+    if gemini_keys:
+        num_gemini = len(gemini_keys)
+        current_gemini_index = current_gemini_index % num_gemini
+        last_gemini_err = None
+        
+        for attempt in range(num_gemini):
+            idx = (current_gemini_index + attempt) % num_gemini
+            g_key = gemini_keys[idx]
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={g_key}"
+                headers = {"Content-Type": "application/json"}
+                payload: dict = {
+                    "contents": [{"parts": [{"text": prompt}]}]
+                }
+                if json_mode:
+                    payload["generationConfig"] = {"responseMimeType": "application/json"}
+                    
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                    if response.status_code == 200:
+                        data = response.json()
+                        res = data["candidates"][0]["content"]["parts"][0]["text"]
+                        if res:
+                            current_gemini_index = idx  # Keep this successful key active
+                            return res.strip()
+                    else:
+                        try:
+                            err_msg = response.json()["error"]["message"]
+                            err_text = f"Gemini API Error ({response.status_code}): {err_msg}"
+                        except Exception:
+                            err_text = f"Gemini API Error ({response.status_code}): {response.text}"
+                        
+                        last_gemini_err = Exception(err_text)
+                        print(f"[ROTATION] Gemini Key {idx+1}/{num_gemini} failed: {err_text}. Rotating...", flush=True)
+            except Exception as e:
+                last_gemini_err = e
+                print(f"[ROTATION] Gemini Key {idx+1}/{num_gemini} error: {e}. Rotating...", flush=True)
+
+        # Move to next key for the next overall call if all failed
+        current_gemini_index = (current_gemini_index + 1) % num_gemini
+        
+        if last_gemini_err and not groq_keys:
+            raise last_gemini_err
+
+    # Try Groq keys with rotation
+    if groq_keys:
+        num_groq = len(groq_keys)
+        current_groq_index = current_groq_index % num_groq
+        last_groq_err = None
+        
+        for attempt in range(num_groq):
+            idx = (current_groq_index + attempt) % num_groq
+            gr_key = groq_keys[idx]
+            try:
+                url = "https://api.groq.com/openai/v1/chat/completions"
+                headers = {
+                    "Authorization": f"Bearer {gr_key}",
+                    "Content-Type": "application/json"
+                }
+                payload: dict = {
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.2
+                }
+                if json_mode:
+                    payload["response_format"] = {"type": "json_object"}
+                    
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(url, json=payload, headers=headers, timeout=20.0)
+                    if response.status_code == 200:
+                        data = response.json()
+                        res = data["choices"][0]["message"]["content"]
+                        if res:
+                            current_groq_index = idx  # Keep this successful key active
+                            return res.strip()
+                    else:
+                        try:
+                            err_data = response.json()
+                            err_msg = err_data["error"]["message"]
+                            err_text = f"Groq API Error ({response.status_code}): {err_msg}"
+                        except Exception:
+                            err_text = f"Groq API Error ({response.status_code}): {response.text}"
+                        
+                        last_groq_err = Exception(err_text)
+                        print(f"[ROTATION] Groq Key {idx+1}/{num_groq} failed: {err_text}. Rotating...", flush=True)
+            except Exception as e:
+                last_groq_err = e
+                print(f"[ROTATION] Groq Key {idx+1}/{num_groq} error: {e}. Rotating...", flush=True)
+
+        # Move to next key for the next overall call if all failed
+        current_groq_index = (current_groq_index + 1) % num_groq
+        
+        if last_groq_err:
+            raise last_groq_err
 
     raise Exception("No active AI model keys configured. Please add GEMINI_API_KEY or GROQ_API_KEY to your .env file.")
 
