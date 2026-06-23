@@ -719,7 +719,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                     "Authorization": f"Bearer {nv_key}",
                     "Content-Type": "application/json"
                 }
-                model_name = os.getenv("NVIDIA_MODEL") or "nvidia/nemotron-3-ultra-550b-a55b"
+                model_name = os.getenv("NVIDIA_MODEL") or "nvidia/nemotron-3-super-120b-a12b"
                 payload: dict = {
                     "model": model_name,
                     "messages": [{"role": "user", "content": prompt}],
@@ -730,7 +730,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                     payload["response_format"] = {"type": "json_object"}
                     
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(url, json=payload, headers=headers, timeout=180.0)
+                    response = await client.post(url, json=payload, headers=headers, timeout=60.0)
                     if response.status_code == 200:
                         data = response.json()
                         res = data["choices"][0]["message"]["content"]
@@ -773,7 +773,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                     "HTTP-Referer": "https://github.com/JyotirmoyLaha/Scrapling",
                     "X-Title": "Scrapling"
                 }
-                model_name = os.getenv("OPENROUTER_MODEL") or "nvidia/nemotron-3-ultra-550b-a55b"
+                model_name = os.getenv("OPENROUTER_MODEL") or "nvidia/nemotron-3-super-120b-a12b"
                 payload: dict = {
                     "model": model_name,
                     "messages": [{"role": "user", "content": prompt}],
@@ -784,7 +784,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                     payload["response_format"] = {"type": "json_object"}
                     
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(url, json=payload, headers=headers, timeout=180.0)
+                    response = await client.post(url, json=payload, headers=headers, timeout=60.0)
                     if response.status_code == 200:
                         data = response.json()
                         res = data["choices"][0]["message"]["content"]
@@ -831,7 +831,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                 payload["generationConfig"] = gen_config
                     
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(url, json=payload, headers=headers, timeout=180.0)
+                    response = await client.post(url, json=payload, headers=headers, timeout=60.0)
                     if response.status_code == 200:
                         data = response.json()
                         res = data["candidates"][0]["content"]["parts"][0]["text"]
@@ -882,7 +882,7 @@ async def async_query_llm(prompt: str, json_mode: bool = False) -> str:
                     payload["response_format"] = {"type": "json_object"}
                     
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(url, json=payload, headers=headers, timeout=180.0)
+                    response = await client.post(url, json=payload, headers=headers, timeout=60.0)
                     if response.status_code == 200:
                         data = response.json()
                         res = data["choices"][0]["message"]["content"]
