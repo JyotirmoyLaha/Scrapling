@@ -1,15 +1,39 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { DiscoveryNodeMap } from './PremiumAddons';
+
+const RESULTS_PER_PAGE = 10;
+
+// Build the page buttons, collapsing long runs into ellipses so the bar stays one line.
+// e.g. for page 7 of 14 -> [1, '...', 6, 7, 8, '...', 14]
+function getPageNumbers(current, total) {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+
+  const pages = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, current + 1);
+
+  if (start > 2) pages.push('start-ellipsis');
+  for (let i = start; i <= end; i++) pages.push(i);
+  if (end < total - 1) pages.push('end-ellipsis');
+
+  pages.push(total);
+  return pages;
+}
 
 export default function Discovery({ onSelectUrl }) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState([]);
   const [error, setError] = useState('');
-  
+
   // State for inline previews: key is URL, value is { content: string, loading: boolean, format: string, error: string }
   const [previews, setPreviews] = useState({});
   const [hasSearched, setHasSearched] = useState(false);
+  // How many DuckDuckGo pages the backend crawls per search. More depth = more results, more wait.
+  const [depth, setDepth] = useState(5);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const handleSearch = async (e) => {
     if (e && e.preventDefault) {
@@ -22,9 +46,12 @@ export default function Discovery({ onSelectUrl }) {
     setResults([]);
     setPreviews({});
     setHasSearched(false);
+    setCurrentPage(1);
 
     try {
-      const response = await fetch(`http://localhost:8000/api/search?q=${encodeURIComponent(query)}`);
+      const response = await fetch(
+        `http://localhost:8000/api/search?q=${encodeURIComponent(query)}&pages=${depth}`
+      );
       if (!response.ok) {
         throw new Error('Failed to fetch search results from web');
       }
@@ -36,6 +63,11 @@ export default function Discovery({ onSelectUrl }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const goToPage = (page) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const togglePreview = async (url) => {
@@ -144,6 +176,17 @@ export default function Discovery({ onSelectUrl }) {
 
   const valState = getValidationState();
 
+  // Results are fetched in full once, then paged locally so switching pages is instant.
+  const totalPages = Math.max(1, Math.ceil(results.length / RESULTS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const firstIndex = (safePage - 1) * RESULTS_PER_PAGE;
+  // Memoised so the slice keeps a stable identity between renders — DiscoveryNodeMap rebuilds its
+  // canvas animation whenever the results array changes, and opening a preview must not restart it.
+  const pageResults = useMemo(
+    () => results.slice(firstIndex, firstIndex + RESULTS_PER_PAGE),
+    [results, firstIndex]
+  );
+
   return (
     <div>
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
@@ -206,7 +249,28 @@ export default function Discovery({ onSelectUrl }) {
               {valState.message}
             </div>
           </div>
-          <button 
+
+          <div className="form-group">
+            <label>Search Depth</label>
+            <select
+              value={depth}
+              onChange={(e) => setDepth(Number(e.target.value))}
+              disabled={loading}
+              style={{ width: '100%' }}
+            >
+              <option value={1}>Quick — 1 page (~10 results)</option>
+              <option value={3}>Standard — 3 pages (~40 results)</option>
+              <option value={5}>Deep — 5 pages (~70 results)</option>
+              <option value={10}>Exhaustive — 10 pages (~145 results)</option>
+              <option value={20}>Maximum — 20 pages (every result available)</option>
+            </select>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
+              Higher depth crawls further through the search index. Results are de-duplicated and
+              browsed 10 at a time below.
+            </div>
+          </div>
+
+          <button
             type="submit" 
             className="btn btn-primary btn-blue" 
             disabled={loading || valState.status === 'invalid'} 
@@ -257,7 +321,8 @@ export default function Discovery({ onSelectUrl }) {
               <div>
                 <strong style={{ color: 'var(--success)', fontSize: '1.1rem' }}>VERIFIED: Phrase is Available on the Web</strong>
                 <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                  We successfully found {results.length} active website(s) reference and publish this context.
+                  We successfully found {results.length} active website(s) reference and publish this context
+                  {totalPages > 1 && ` — shown across ${totalPages} pages`}.
                 </p>
               </div>
             </div>
@@ -265,16 +330,21 @@ export default function Discovery({ onSelectUrl }) {
 
           {results.length > 0 && (
             <div style={{ marginBottom: '1.5rem' }}>
-              <DiscoveryNodeMap query={query} results={results} onSelectNode={(url) => togglePreview(url)} />
+              <DiscoveryNodeMap query={query} results={pageResults} onSelectNode={(url) => togglePreview(url)} />
             </div>
           )}
-          <h3 style={{ color: 'var(--secondary)', marginBottom: '0.5rem' }}>Verified Web Discoveries</h3>
-          {results.map((res, index) => {
+          <div className="flex-between" style={{ flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <h3 style={{ color: 'var(--secondary)' }}>Verified Web Discoveries</h3>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              Showing {firstIndex + 1}–{firstIndex + pageResults.length} of {results.length}
+            </span>
+          </div>
+          {pageResults.map((res) => {
             const preview = previews[res.url];
             return (
-              <div 
-                key={index} 
-                className="glass-card" 
+              <div
+                key={res.url}
+                className="glass-card"
                 style={{ 
                   padding: '1.5rem', 
                   borderLeft: '4px solid var(--secondary)',
@@ -391,6 +461,55 @@ export default function Discovery({ onSelectUrl }) {
               </div>
             );
           })}
+
+          {totalPages > 1 && (
+            <div
+              className="glass-card"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexWrap: 'wrap',
+                gap: '0.4rem',
+                padding: '1rem'
+              }}
+            >
+              <button
+                className="btn btn-secondary"
+                style={{ padding: '0.4rem 0.9rem', fontSize: '0.85rem' }}
+                onClick={() => goToPage(safePage - 1)}
+                disabled={safePage === 1}
+              >
+                ← Prev
+              </button>
+
+              {getPageNumbers(safePage, totalPages).map((page) =>
+                typeof page === 'string' ? (
+                  <span key={page} style={{ padding: '0 0.4rem', color: 'var(--text-muted)' }}>
+                    …
+                  </span>
+                ) : (
+                  <button
+                    key={page}
+                    className={page === safePage ? 'btn btn-primary btn-blue' : 'btn btn-secondary'}
+                    style={{ padding: '0.4rem 0.85rem', fontSize: '0.85rem', minWidth: '2.4rem' }}
+                    onClick={() => goToPage(page)}
+                  >
+                    {page}
+                  </button>
+                )
+              )}
+
+              <button
+                className="btn btn-secondary"
+                style={{ padding: '0.4rem 0.9rem', fontSize: '0.85rem' }}
+                onClick={() => goToPage(safePage + 1)}
+                disabled={safePage === totalPages}
+              >
+                Next →
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         hasSearched && !loading && (
