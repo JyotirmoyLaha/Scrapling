@@ -1,6 +1,12 @@
+# The Scrapling library itself, installed from the repo root. Pulls in lxml, curl_cffi,
+# patchright, browserforge and the rest of the fetcher stack that main.py imports.
+-e ../..[fetchers]
+
 fastapi
 uvicorn
 pydantic
 orjson
 tld
-playwright
+markdownify
+beautifulsoup4
+httpx
