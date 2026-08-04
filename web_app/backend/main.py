@@ -400,47 +400,104 @@ class LibrarySaveRequest(BaseModel):
     extraction_type: str
 
 # API Routes
+DDG_HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
+# DuckDuckGo serves 10 results on the first page and ~15 on each one after it, so this is
+# roughly 10 + 15 * (n - 1) results. Kept as a ceiling because every extra page is a round trip.
+DDG_MAX_PAGES = 20
+
+
+def _resolve_ddg_link(link: str) -> str:
+    """Unwrap a DuckDuckGo /l/?uddg= redirect into the real destination URL."""
+    from urllib.parse import parse_qs, urlparse
+
+    if link.startswith("//duckduckgo.com/l/?uddg="):
+        prefix = "https:"
+    elif link.startswith("/l/?uddg="):
+        prefix = "https://duckduckgo.com"
+    else:
+        return link
+
+    qs = parse_qs(urlparse(prefix + link).query)
+    return qs["uddg"][0] if "uddg" in qs else link
+
+
+def _parse_ddg_results(page) -> List[Dict]:
+    """Pull the (title, url, snippet) triples out of one DuckDuckGo HTML result page."""
+    parsed = []
+    for r in page.css("div.web-result"):
+        title_elems = r.css("a.result__a")
+        if not title_elems:
+            continue
+
+        link = title_elems[0].attrib.get("href") or ""
+        if not link:
+            continue
+
+        snippet_elems = r.css("a.result__snippet")
+        parsed.append(
+            {
+                "title": title_elems[0].get_all_text(strip=True) or "No Title",
+                "url": _resolve_ddg_link(link),
+                "snippet": snippet_elems[0].get_all_text(strip=True) if snippet_elems else "",
+            }
+        )
+    return parsed
+
+
+def _ddg_next_page_form(page) -> Optional[Dict]:
+    """Build the POST payload for the "Next" button, or None when we are on the last page."""
+    for form in page.css("div.nav-link form"):
+        fields = {}
+        is_next = False
+        for field in form.css("input"):
+            name = field.attrib.get("name")
+            value = field.attrib.get("value") or ""
+            if name:
+                fields[name] = value
+            elif value == "Next":
+                # The submit button carries no name; it is what distinguishes Next from Previous.
+                is_next = True
+        # `s` is the result offset. Without it there is nothing to advance to.
+        if is_next and fields.get("s"):
+            return fields
+    return None
+
+
 @app.get("/api/search")
-async def search_web(q: str):
+async def search_web(q: str, pages: int = 5):
     if not q:
         raise HTTPException(status_code=400, detail="Query string is required")
+
+    pages = max(1, min(pages, DDG_MAX_PAGES))
     try:
-        from urllib.parse import parse_qs, urlparse
-        # URL encode query
-        url = f"https://html.duckduckgo.com/html/?q={q}"
-        page = await AsyncFetcher.get(url)
-        
-        results = page.css('div.web-result')
+        from urllib.parse import quote_plus
+
         search_results = []
-        for r in results:
-            title_elems = r.css('a.result__a')
-            snippet_elems = r.css('a.result__snippet')
-            
-            title = title_elems[0].get_all_text(strip=True) if len(title_elems) > 0 else "No Title"
-            link = title_elems[0].attrib.get('href') if len(title_elems) > 0 else ""
-            snippet = snippet_elems[0].get_all_text(strip=True) if len(snippet_elems) > 0 else ""
-            
-            if not link:
-                continue
-                
-            # Clean DuckDuckGo redirects
-            if link.startswith("//duckduckgo.com/l/?uddg="):
-                parsed = urlparse("https:" + link)
-                qs = parse_qs(parsed.query)
-                if 'uddg' in qs:
-                    link = qs['uddg'][0]
-            elif link.startswith("/l/?uddg="):
-                parsed = urlparse("https://duckduckgo.com" + link)
-                qs = parse_qs(parsed.query)
-                if 'uddg' in qs:
-                    link = qs['uddg'][0]
-                    
-            search_results.append({
-                "title": title,
-                "url": link,
-                "snippet": snippet
-            })
-            
+        seen_urls = set()
+        page = await AsyncFetcher.get(f"{DDG_HTML_ENDPOINT}?q={quote_plus(q)}")
+
+        for _ in range(pages):
+            if page.status != 200:
+                break
+
+            new_on_this_page = 0
+            for result in _parse_ddg_results(page):
+                # DuckDuckGo repeats some links across page boundaries; keep the first occurrence.
+                if result["url"] in seen_urls:
+                    continue
+                seen_urls.add(result["url"])
+                search_results.append(result)
+                new_on_this_page += 1
+
+            # A page of nothing but duplicates means we have hit the end of the useful results.
+            if not new_on_this_page:
+                break
+
+            next_form = _ddg_next_page_form(page)
+            if not next_form:
+                break
+            page = await AsyncFetcher.post(DDG_HTML_ENDPOINT, data=next_form)
+
         return search_results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
