@@ -53,7 +53,13 @@ def generate_headers(browser_mode: bool | str = False) -> Dict:
                 Browser(name="edge", min_version=140),
             ]
         )
-    return HeaderGenerator(browser=browsers, os=os_name, device="desktop").generate()
+    try:
+        return HeaderGenerator(browser=browsers, os=os_name, device="desktop").generate()
+    except ValueError:
+        # browserforge's fingerprint dataset can lag behind the versions hardcoded above, and it
+        # raises when no sample matches the exact pin. Drop the pin so it uses the newest data it ships.
+        browsers[0] = Browser(name="chrome")
+        return HeaderGenerator(browser=browsers, os=os_name, device="desktop").generate()
 
 
 __default_useragent__ = generate_headers(browser_mode=False).get("User-Agent")
