@@ -18,6 +18,16 @@ Double-click **`run_backend.bat`**. This launches a FastAPI server running local
 Double-click **`run_frontend.bat`**. This spins up the Vite + React dev server and opens the dashboard in your default browser at:
 `http://localhost:5173`
 
+### 3. One-time: install the browsers (only needed for Dynamic / Stealthy modes)
+**Static** mode needs nothing. The two browser-backed modes each use a *different* browser stack with its own pinned Chromium build, so they are installed separately. From `web_app/backend`:
+
+```bash
+venv\Scripts\python.exe -m playwright  install chromium   # for Dynamic mode
+venv\Scripts\python.exe -m patchright  install chromium   # for Stealthy mode
+```
+
+> Note: `scrapling install` only covers the **playwright** half. If Dynamic mode works but every Stealthy run fails with *"Executable doesn't exist"*, you are missing the **patchright** browser — run the second command above.
+
 ---
 
 ## 🔑 AI Briefing & API Keys Setup
@@ -52,17 +62,24 @@ GROQ_API_KEY=your_actual_groq_key_here
 ### 2. Discovery Engine
 - Search the web for topics or news snippets.
 - Instantly verify availability and citation density of phrases.
-- Push search result URLs directly into the Scraper Console with one click.
+- Push search result URLs directly into the Scraper Console — or seed a whole crawl from them.
 
-### 3. Persistent Sessions
+### 3. Crawl Engine
+- **Real multi-page crawls** built on `scrapling.spiders`: depth limiting, link rules, allowed domains, robots.txt compliance, per-domain concurrency and delays.
+- **Background jobs** with live progress streamed over Server-Sent Events — pages, requests/sec, queue depth, in-flight tasks, HTTP status breakdown and failure counters, all updating in real time.
+- **Graceful stop** that drains in-flight requests instead of dropping them, plus optional checkpointing so a stopped crawl can resume.
+- **Jobs survive restarts**: crawl state and every scraped page are persisted to SQLite, and interrupted jobs are reconciled on startup.
+- **Export** any crawl as JSON, JSONL, CSV, or Markdown, or push the results straight into the Research Library.
+
+### 4. Persistent Sessions
 - Spin up background browser sessions.
 - Log into pages, maintain cookie states, and navigate multi-step flows without getting logged out or blocked.
 
-### 4. Research Library
+### 5. Research Library
 - Save your scraped articles, HTML contents, or Markdown captures.
 - Cataloged in a local database (`research.db`) with instant full-text search.
 
-### 5. Script Generator
+### 6. Script Generator
 - Exports your exact dashboard scraping actions into ready-to-run Python code templates, including:
   - Simple one-off fetch scripts.
   - Stateful session blocks.

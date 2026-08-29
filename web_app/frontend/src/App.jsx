@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Scraper from './components/Scraper';
 import Discovery from './components/Discovery';
+import Crawler from './components/Crawler';
 import Sessions from './components/Sessions';
 import Library from './components/Library';
 import ScriptGen from './components/ScriptGen';
@@ -9,6 +10,12 @@ import CyberCanvas from './components/CyberCanvas';
 function App() {
   const [activeTab, setActiveTab] = useState('scraper');
   const [selectedUrl, setSelectedUrl] = useState('');
+  const [crawlSeeds, setCrawlSeeds] = useState([]);
+
+  const openInScraper = (url) => {
+    setSelectedUrl(url);
+    setActiveTab('scraper');
+  };
 
   const renderActiveTab = () => {
     switch (activeTab) {
@@ -16,12 +23,17 @@ function App() {
         return <Scraper defaultUrl={selectedUrl} setDefaultUrl={setSelectedUrl} />;
       case 'discovery':
         return (
-          <Discovery 
-            onSelectUrl={(url) => {
-              setSelectedUrl(url);
-              setActiveTab('scraper');
-            }} 
+          <Discovery
+            onSelectUrl={openInScraper}
+            onSeedCrawl={(urls) => {
+              setCrawlSeeds(urls);
+              setActiveTab('crawler');
+            }}
           />
+        );
+      case 'crawler':
+        return (
+          <Crawler seedUrls={crawlSeeds} onOpenInScraper={openInScraper} />
         );
       case 'sessions':
         return <Sessions />;
@@ -100,7 +112,27 @@ function App() {
           </li>
 
           <li className="nav-item">
-            <button 
+            <button
+              className={`nav-button ${activeTab === 'crawler' ? 'active-blue' : ''}`}
+              onClick={() => setActiveTab('crawler')}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="2.5"></circle>
+                <circle cx="4.5" cy="5.5" r="1.8"></circle>
+                <circle cx="19.5" cy="5.5" r="1.8"></circle>
+                <circle cx="4.5" cy="18.5" r="1.8"></circle>
+                <circle cx="19.5" cy="18.5" r="1.8"></circle>
+                <line x1="10.2" y1="10.2" x2="6" y2="7"></line>
+                <line x1="13.8" y1="10.2" x2="18" y2="7"></line>
+                <line x1="10.2" y1="13.8" x2="6" y2="17"></line>
+                <line x1="13.8" y1="13.8" x2="18" y2="17"></line>
+              </svg>
+              Crawl Engine
+            </button>
+          </li>
+
+          <li className="nav-item">
+            <button
               className={`nav-button ${activeTab === 'sessions' ? 'active-blue' : ''}`}
               onClick={() => setActiveTab('sessions')}
             >

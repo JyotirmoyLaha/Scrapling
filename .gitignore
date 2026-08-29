@@ -112,3 +112,6 @@ web/
 
 # Backend environment keys
 web_app/backend/.env
+
+# Crawl engine runtime artifacts (per-job checkpoints and logs)
+web_app/backend/crawl_data/

@@ -22,7 +22,7 @@ function getPageNumbers(current, total) {
   return pages;
 }
 
-export default function Discovery({ onSelectUrl }) {
+export default function Discovery({ onSelectUrl, onSeedCrawl }) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState([]);
@@ -335,8 +335,19 @@ export default function Discovery({ onSelectUrl }) {
           )}
           <div className="flex-between" style={{ flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
             <h3 style={{ color: 'var(--secondary)' }}>Verified Web Discoveries</h3>
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Showing {firstIndex + 1}–{firstIndex + pageResults.length} of {results.length}
+            <span style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              {onSeedCrawl && (
+                <button
+                  className="btn-mini"
+                  onClick={() => onSeedCrawl(results.map((r) => r.url))}
+                  title="Send every result to the Crawl Engine as start URLs"
+                >
+                  Crawl all {results.length} results
+                </button>
+              )}
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                Showing {firstIndex + 1}–{firstIndex + pageResults.length} of {results.length}
+              </span>
             </span>
           </div>
           {pageResults.map((res) => {
@@ -382,14 +393,25 @@ export default function Discovery({ onSelectUrl }) {
                     Open in Scraper Console
                   </button>
                   
-                  <button 
-                    className="btn btn-secondary" 
-                    onClick={() => togglePreview(res.url)} 
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => togglePreview(res.url)}
                     style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
                   >
                     {preview ? 'Hide Preview' : 'Quick Preview'}
                   </button>
-                  
+
+                  {onSeedCrawl && (
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => onSeedCrawl([res.url])}
+                      style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+                      title="Use this URL as the start of a crawl"
+                    >
+                      Seed Crawl
+                    </button>
+                  )}
+
                   <a 
                     href={res.url} 
                     target="_blank" 

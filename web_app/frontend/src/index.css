@@ -616,3 +616,233 @@ pre {
   to { transform: rotate(360deg); }
 }
 
+/* ===================== Crawl Engine ===================== */
+
+/* Job status badges (extend .status-badge) */
+.status-badge.queued,
+.status-badge.stopped {
+  background-color: rgba(126, 135, 154, 0.12);
+  color: var(--text-muted);
+}
+
+.status-badge.running {
+  background-color: rgba(0, 180, 252, 0.1);
+  color: var(--secondary);
+}
+
+.status-badge.running::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--secondary);
+  animation: pulse 1.4s infinite ease-in-out;
+}
+
+.status-badge.paused {
+  background-color: rgba(255, 180, 0, 0.1);
+  color: var(--warning);
+}
+
+.status-badge.completed {
+  background-color: rgba(0, 240, 154, 0.1);
+  color: var(--success);
+}
+
+.status-badge.failed {
+  background-color: rgba(255, 59, 59, 0.1);
+  color: var(--error);
+}
+
+/* Live stat tiles */
+.crawl-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.crawl-stat {
+  background: rgba(9, 10, 14, 0.5);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+}
+
+.crawl-stat .v {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--secondary);
+}
+
+.crawl-stat .k {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+/* HTTP status-code chips */
+.code-chip {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+  margin: 0.2rem 0.4rem 0.2rem 0;
+  border: 1px solid var(--card-border);
+}
+
+.code-chip.c2 { color: var(--success); border-color: rgba(0, 240, 154, 0.3); }
+.code-chip.c3 { color: var(--secondary); border-color: rgba(0, 180, 252, 0.3); }
+.code-chip.c4 { color: var(--warning); border-color: rgba(255, 180, 0, 0.3); }
+.code-chip.c5 { color: var(--error); border-color: rgba(255, 59, 59, 0.3); }
+
+/* Progress bars */
+.crawl-progress {
+  height: 6px;
+  width: 100%;
+  background: rgba(9, 10, 14, 0.8);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.crawl-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  transition: width 0.4s ease;
+}
+
+/* Live item feed */
+.crawl-feed {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+}
+
+.crawl-feed table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.crawl-feed th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+  z-index: 1;
+  text-align: left;
+  padding: 0.7rem 1rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--card-border);
+}
+
+.crawl-feed td {
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.crawl-feed tbody tr {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.crawl-feed tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.crawl-url {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--text-main);
+  display: block;
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crawl-depth {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.crawl-content-panel {
+  background: rgba(9, 10, 14, 0.8);
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+}
+
+/* Small inline action buttons for the job table */
+.btn-mini {
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.35rem 0.75rem;
+  border-radius: 7px;
+  border: 1px solid var(--card-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-mini:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--secondary);
+  color: var(--secondary);
+}
+
+.btn-mini:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.btn-mini.danger:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.field-error {
+  color: var(--error);
+  font-size: 0.8rem;
+  margin-top: 0.3rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-transform: none;
+  cursor: pointer;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.hint {
+  font-size: 0.78rem;
+  color: var(--text-dark);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+

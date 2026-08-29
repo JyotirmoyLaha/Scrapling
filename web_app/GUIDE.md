@@ -72,11 +72,155 @@ Use this section if you do **not** have a specific website link, but want to sea
 5. **On each search result, you can click**:
    *   **Open in Scraper Console**: Sends that link directly to the main scraper page so you can inspect it further.
    *   **Quick Preview**: Downloads the page contents right there on the search screen, so you can read it quickly without leaving.
+   *   **Seed Crawl**: Sends that link to the **Crawl Engine** as the starting point of a multi-page crawl.
    *   **Visit Link**: Opens the website in a new tab.
+6. **Crawl all N results**: The button next to the results count sends *every* result to the Crawl Engine at once. Depth is set to 0 automatically, so it fetches exactly those pages and does not wander off following their links.
 
 ---
 
-### 3. Persistent Sessions (Active Browser Manager)
+### 3. Crawl Engine (Multi-Page Crawler)
+
+#### **What is it? (Read this first)**
+The Scraper Console grabs **one** page — you give it a link, it gives you that page.
+
+The Crawl Engine grabs **many** pages automatically. You give it a starting link. It reads that page, finds all the links on it, then goes and reads those pages too. Then it finds the links on *those* pages, and keeps going.
+
+Think of it like a helper you send to a library. Instead of saying *"bring me this one book"*, you say *"start with this book, then also bring me every book it mentions"*.
+
+It works in the background, so you can sit and watch a table fill up with pages as it collects them.
+
+**A quick example**: give it `https://quotes.toscrape.com`, set depth to `1`, set pages to `20`. It reads the homepage, sees links to author pages and tag pages, and reads those too — stopping once it has 20 pages.
+
+---
+
+#### **Part 1: Filling in the Form**
+
+**The basics (you must fill these in):**
+
+*   **Job Name** — Just a name so you can recognise this run later in the list. Like "Blog posts" or "Product pages". If you leave it blank it will be called "Untitled Crawl".
+*   **Start URLs** — The link (or links) to begin from. **Put one link on each line** if you have several. The crawler starts at all of them.
+
+**How to load the pages:**
+
+*   **Fetcher Mode** — Exactly the same three choices as the Scraper Console:
+    *   **Static** — Fastest. Just downloads the text. Use this first.
+    *   **Dynamic** — Opens a real browser. Use it if the site needs JavaScript to show its content.
+    *   **Stealthy** — Opens a browser that hides the fact it's a robot. Use it if the site blocks you.
+    *   ℹ️ The two browser modes need their browser downloaded once first. If a crawl fails saying **"Executable doesn't exist"**, the message tells you the exact command to run. Static mode never needs this.
+*   **Output Format** — What the saved text should look like: **Markdown** (clean and readable, recommended), **Plain Text** (just words), or **Raw HTML** (the website's code).
+
+**Controlling how far and how much (the important part):**
+
+*   **Max Depth** — How many "hops" away from your starting page it is allowed to travel. This is the setting people get wrong most often, so here it is in plain terms:
+    *   `0` = **only** the pages you typed in. It will not follow a single link.
+    *   `1` = your pages, **plus** every page they link to.
+    *   `2` = all of the above, **plus** every page *those* pages link to.
+    *   ⚠️ Be careful: each step multiplies. If a page has 30 links, and each of those has 30 links, depth `2` is already 900 pages. **Start with 1.**
+*   **Max Pages** — A hard stop. Once it has collected this many pages it finishes, no matter what depth would have allowed. **This is your safety net** — it is what stops a crawl running away with you. Keep it small (10–50) while you are still testing your settings.
+*   **Concurrency** — How many pages it fetches *at the same time*. `1` means one after another (slow but gentle). `4` is a good default. Higher numbers finish faster but put more load on the website.
+*   **Delay (s)** — How many seconds to wait between requests. `0` means no waiting. Setting this to `0.5` or `1` is the polite thing to do on small websites, so you don't overwhelm them.
+*   **Page Timeout (s)** — How long to wait for one page before giving up on it. The default `45` seconds suits most sites. **If you see pages "timed out" in the failures list, raise this** — some sites genuinely take 30 seconds or more to finish loading, and a page abandoned at 30s is lost even though it was about to arrive. Lowering it makes a crawl of a broken site fail faster.
+*   **Max Chars / Page** — How much text to keep from each page. The default `20000` characters is plenty for most articles. If pages are getting cut off at the end, raise it. Set it to `0` to keep the whole page no matter how long.
+
+**Picking out only what you want (all optional — leave blank to keep everything):**
+
+*   **Content Selector** — If you only want part of each page, put a CSS label here. For example, typing `article` saves only the article text and throws away the menus, sidebars and footers. Same idea as the Scraper Console's CSS Selector.
+*   **Find Links Only Within** — This does **not** change what gets saved. It changes **where the crawler looks for links to follow next**. For example, typing `.pagination` means it only follows the "next page" buttons and ignores every other link on the page. Very useful for walking through a list page by page.
+*   **Allow URL Patterns** — Only follow links that contain this text. Separate several with commas. Example: typing `/blog/` means it only visits links with `/blog/` in the address.
+*   **Deny URL Patterns** — Never follow links containing this text. Example: typing `/login` skips sign-in pages. **If a link matches both Allow and Deny, Deny wins.**
+    *   *(Note: these two boxes accept "regular expressions" — a pattern-matching mini-language. You don't need to know it. Typing plain text like `/blog/` works perfectly well. If you type something the computer can't understand, the app will tell you straight away and won't start the crawl.)*
+*   **Allowed Domains** — Which websites it is allowed to visit. **Leave this blank** and it automatically stays on the same website(s) as your starting links — which is almost always what you want, and stops it wandering off onto Facebook or Twitter. Only fill it in if you deliberately want it to visit other sites too.
+
+**The tick boxes:**
+
+*   **Follow links** — Tick it (the default) and it follows links. Untick it and it fetches only your starting links and nothing else. *(Unticking this does the same thing as setting depth to 0.)*
+*   **Obey robots.txt** — Most websites publish a small file called `robots.txt` saying which pages robots are welcome to visit. Ticked (the default) means you respect those wishes. **Leave this on** unless the website is your own. (If a site has no such file, nothing is blocked.)
+*   **Headless** — Whether the browser stays invisible. Ticked (the default) means you won't see a browser window pop up. Only applies to Dynamic and Stealthy modes.
+*   **Solve Cloudflare** — Tries to get past "Checking your browser..." block screens. Only available in Stealthy mode.
+*   **Spoof Google Referer** — **Ticked by default**, because a lot of sites reject visitors who arrive with no referer at all, and this makes you look like you came from a Google search. Leave it on unless you hit trouble. ⚠️ Two things to know: it only applies to your **starting links** (pages found by following links send the page they came from instead, which is more natural anyway), and a few advanced protections actually dislike a Google referer — if you get `401` errors, untick it. (More detail in the Scraper Console section above.)
+*   **Block trackers** — **Ticked by default** (browser modes only). Blocks analytics, advertising and chat-widget services. These never contain page content, but they are a common reason a page sits "loading" for half a minute — blocking them makes slow sites noticeably faster and prevents some timeouts outright.
+*   **Resumable** — Saves its progress every 30 seconds. If you stop the crawl, you can carry on later from roughly where it left off instead of starting over.
+
+> **Redirects are handled for you.** If your start URL redirects somewhere else — `morth.nic.in` sends you to `morth.gov.in`, or a bare domain sends you to `www.` — the crawler notices and allows the site it actually landed on. Without that, every link on the page would count as "a different website" and the crawl would stop after one page.
+
+---
+
+#### **Part 2: Watching It Run**
+
+Press **Launch Crawl**. Your job appears in the **Crawl Jobs** table straight away.
+
+**What the coloured status labels mean:**
+
+| Label | What is happening |
+| --- | --- |
+| **queued** | Waiting its turn. Only **two** crawls run at once, so a third one waits here until a slot frees up. |
+| **running** | Working right now (it has a little blinking dot). |
+| **completed** | Finished on its own — it either ran out of pages to visit or hit your Max Pages limit. |
+| **stopped** | You pressed Stop, or the app was closed while it was running. |
+| **paused** | Stopped, but it had "Resumable" ticked, so its progress was saved. |
+| **failed** | Something went wrong, **or the crawl captured no pages at all**. The reason is shown right underneath in orange, along with what to try next. |
+
+> A crawl that finishes without capturing a single page is reported as **failed**, not "completed" — because nothing was achieved and you need to know why. Common reasons it will tell you about: the site refused every request (HTTP 403), robots.txt disallowed everything, the address was unreachable, or every link found pointed at another domain.
+
+**The live panel underneath** updates every second while the crawl runs:
+
+*   **The number tiles** tell you, at a glance:
+    *   **Pages** — how many pages it has saved so far.
+    *   **Requests** — how many times it has asked the website for something.
+    *   **Req / Sec** — its current speed.
+    *   **Elapsed** — how long it has been running.
+    *   **Queued** — how many links it has found but not visited yet. This number going *down* means it is finishing up.
+    *   **In Flight** — how many pages it is downloading at this exact moment.
+    *   **Failed** — pages that wouldn't load.
+    *   **Blocked** — times the website refused it.
+    *   **Offsite** — links it skipped for pointing at a different website.
+    *   **Robots Blocked** — links it skipped because the site's robots.txt asked it not to visit.
+    *   **Downloaded** — total amount of data pulled down.
+*   **The small coloured chips** (like `200 × 12`) count the website's replies. `200` in green means "page delivered fine" — that's what you want to see. Orange `404` means "page not found". Red `500` means the website itself had an error.
+*   **The table at the bottom** adds a row for every page the moment it arrives, newest at the top. **Click any row** and it opens up to show you the text it captured, plus buttons to **Open in Scraper** or **Visit** the page in a new tab.
+
+**The Stop button** ends the crawl politely: it lets the pages it is already downloading finish first, rather than yanking the plug. **Nothing you have already collected is lost** — everything saved so far stays.
+
+---
+
+#### **Part 3: Getting Your Data Out**
+
+The buttons at the top-right of the live panel:
+
+*   **JSON** — One structured file with everything. Best if you're going to feed it into another program.
+*   **JSONL** — The same data, but one page per line. Handy for very large crawls and data tools.
+*   **CSV** — A spreadsheet file. **Double-click it and it opens straight in Excel**, with accented and non-English characters intact.
+*   **MD** — One single readable Markdown document containing every page, one after another, each with its title and link.
+
+Clicking any of these downloads a real file to your computer (look in your Downloads folder).
+
+*   **Send to Library** — Copies the crawled pages into your **Research Library** tab, so they sit alongside everything else you've saved and can be searched together. It saves up to 100 pages at a time and asks you to confirm first.
+
+---
+
+#### **When a site still won't crawl properly**
+
+Most sites work once you pick the right Fetcher Mode. These are the cases that genuinely stay hard, and what to do about each:
+
+| Symptom | What is going on | What helps |
+| --- | --- | --- |
+| Pages load, but **no links are followed** | The site's menus are built by JavaScript with no real links behind them (common with Angular/React government and corporate sites). There is nothing for a crawler to follow. | Feed the URLs in yourself: paste a list into **Start URLs**, or use the **Discovery Engine** to search the site and hit "Crawl all N results". |
+| Everything returns **403** | The site is refusing automated visitors. | Stealthy mode, tick **Spoof Google Referer** and **Solve Cloudflare**, and raise **Delay** to 1–2 seconds so you look less like a machine. |
+| Pages **time out** | The site is simply slow. | Raise **Page Timeout**, lower **Concurrency**. |
+| Content is behind a **login** | The crawler is not signed in. | Use the **Persistent Sessions** tab to log in and browse manually — crawling cannot do this for you. |
+| The site **asks not to be crawled** | Its robots.txt disallows it. | Respect it. Only untick **Obey robots.txt** for sites you own. |
+
+There is no setting that makes every website work. Sites that require a login, hide everything behind JavaScript actions, or actively defend against automation will still need either manual URLs or a per-site approach.
+
+---
+
+> ⚠️ **One thing to watch out for**
+> Start the backend the normal way, using `run_backend.bat`.
+> If you happen to start it with the `--reload` option (a developer setting), then **saving any file on your computer restarts the backend and kills any crawl that is running**. Ordinary use is unaffected — just don't use `--reload` while crawling.
+
+---
+
+### 4. Persistent Sessions (Active Browser Manager)
 Standard scraping opens a website, grabs the data, and immediately closes the window. **Sessions** let you keep a virtual browser tab open in the background.
 
 #### **Why Use Sessions?**
@@ -93,7 +237,7 @@ Standard scraping opens a website, grabs the data, and immediately closes the wi
 
 ---
 
-### 4. Research Library (Your Saved History)
+### 5. Research Library (Your Saved History)
 This is a catalog of all the web page data you have saved.
 
 *   **Search box**: Type keywords or parts of a link to instantly find a specific saved scrape.
@@ -103,7 +247,7 @@ This is a catalog of all the web page data you have saved.
 
 ---
 
-### 5. Script Generator (Python Code Exporter)
+### 6. Script Generator (Python Code Exporter)
 Once you have tested options on the screen and found a combination that works, you might want to automate it using a Python script. This tab does the coding work for you.
 
 It translates your screen choices into three clean Python scripts that you can copy-paste and run on your computer:

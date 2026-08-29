@@ -5,8 +5,14 @@ import os
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "research.db")
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
+    # WAL lets the crawl runner's batch writer and the SSE/read requests work
+    # concurrently instead of tripping over "database is locked" on Windows.
+    # journal_mode is a persistent property of the file; the pragma is idempotent.
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 def init_db():

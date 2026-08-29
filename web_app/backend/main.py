@@ -17,48 +17,10 @@ from scrapling.fetchers import (
 )
 import database
 
-def clean_for_llm(content: str, max_chars: int = 15000) -> str:
-    if not content:
-        return ""
-    # If it is raw HTML, strip script, style, header, footer, nav tags and get plain text/markdown
-    if "<html" in content or "<body" in content or "<div" in content or "<p" in content:
-        try:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(content, "html.parser")
-            # Remove scripts, styles, metadata, header, footer and nav
-            for el in soup(["script", "style", "meta", "noscript", "header", "footer", "nav"]):
-                el.decompose()
-            content = soup.get_text(separator="\n")
-        except Exception:
-            pass
-            
-    # Normalize multiple newlines to max \n\n and multiple spaces to single space
-    import re
-    content = re.sub(r'\n\s*\n', '\n\n', content)
-    content = re.sub(r'[ \t]+', ' ', content)
-    return content[:max_chars].strip()
+# These live in content_utils so crawler.py can use them without importing main.
+# Re-exported here because call sites throughout this module reference them unqualified.
+from content_utils import clean_for_llm, extract_content  # noqa: F401
 
-def extract_content(page, css_selector: Optional[str], extraction_type: str) -> str:
-    if css_selector:
-        target_selector = page.css(css_selector)
-        if not target_selector:
-            return ""
-        parts = []
-        for sel in target_selector:
-            if extraction_type == "markdown":
-                parts.append(markdownify(sel.get()))
-            elif extraction_type == "text":
-                parts.append(sel.get_all_text(strip=True))
-            else:
-                parts.append(sel.get())
-        return "\n\n".join(parts)
-    else:
-        if extraction_type == "markdown":
-            return markdownify(page.html_content)
-        elif extraction_type == "text":
-            return page.get_all_text(strip=True)
-        else:
-            return page.html_content
 
 def escape_xpath_literal(s: str) -> str:
     if "'" not in s:
@@ -344,11 +306,31 @@ async def generate_summary(text: str, max_sentences: int = 5) -> str:
 
 from contextlib import asynccontextmanager
 
+import crawl_db
+import crawl_jobs
+
 # Initialize Database on startup using lifespan context manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
-    yield
+    crawl_db.init_crawl_tables()
+    # Nothing is running yet, so any job still marked running/queued is a casualty
+    # of the last shutdown. Fix them up before we start serving.
+    recovered = crawl_db.reconcile_on_startup()
+    if recovered:
+        print(f"[STARTUP] reconciled {recovered} interrupted crawl job(s)", flush=True)
+    try:
+        yield
+    finally:
+        await crawl_jobs.job_manager.shutdown()
+        # Browser sessions opened via /api/sessions/open were never closed on exit,
+        # leaving orphaned chrome processes behind after every restart.
+        for sid, info in list(active_sessions.items()):
+            try:
+                await info["session"].close()
+            except Exception as e:
+                print(f"[SHUTDOWN] failed to close session {sid}: {e}", flush=True)
+            active_sessions.pop(sid, None)
 
 app = FastAPI(title="Scrapling Visual Workspace API", lifespan=lifespan)
 
@@ -360,6 +342,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Crawl engine: /api/crawl/*
+from crawl_api import router as crawl_router  # noqa: E402
+
+app.include_router(crawl_router)
 
 # Keep track of active persistent sessions
 # Format: { session_id: { "session": session_obj, "type": "stealthy" | "dynamic", "created_at": str } }
