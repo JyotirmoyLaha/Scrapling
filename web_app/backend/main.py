@@ -450,6 +450,110 @@ def _ddg_next_page_form(page) -> Optional[Dict]:
     return None
 
 
+async def _search_ddg(q: str, pages: int) -> Optional[List[Dict]]:
+    """Page through DuckDuckGo. Returns None when DuckDuckGo refuses the very first page."""
+    # POST, like DuckDuckGo's own search form. A plain GET with ?q= is far more likely to get
+    # the "select all squares containing a duck" bot challenge (HTTP 202, zero results).
+    page = await AsyncFetcher.post(DDG_HTML_ENDPOINT, data={"q": q})
+    if page.status != 200:
+        return None
+
+    search_results = []
+    seen_urls = set()
+    for _ in range(pages):
+        if page.status != 200:
+            # A later page being challenged just ends pagination; keep what we already have.
+            break
+
+        new_on_this_page = 0
+        for result in _parse_ddg_results(page):
+            # DuckDuckGo repeats some links across page boundaries; keep the first occurrence.
+            if result["url"] in seen_urls:
+                continue
+            seen_urls.add(result["url"])
+            search_results.append(result)
+            new_on_this_page += 1
+
+        # A page of nothing but duplicates means we have hit the end of the useful results.
+        if not new_on_this_page:
+            break
+
+        next_form = _ddg_next_page_form(page)
+        if not next_form:
+            break
+        page = await AsyncFetcher.post(DDG_HTML_ENDPOINT, data=next_form)
+
+    return search_results
+
+
+BING_ENDPOINT = "https://www.bing.com/search"
+BING_PAGE_SIZE = 10
+
+
+def _resolve_bing_link(link: str) -> str:
+    """Unwrap a Bing /ck/a?...&u=a1<base64url> click-tracking redirect into the real URL."""
+    from urllib.parse import parse_qs, urlparse
+
+    if "bing.com/ck/a" not in link:
+        return link
+    encoded = parse_qs(urlparse(link).query).get("u", [""])[0]
+    if not encoded.startswith("a1"):
+        return link
+    encoded = encoded[2:]
+    try:
+        return base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return link
+
+
+def _parse_bing_results(page) -> List[Dict]:
+    """Pull the (title, url, snippet) triples out of one Bing result page."""
+    parsed = []
+    for r in page.css("li.b_algo"):
+        title_elems = r.css("h2 a")
+        if not title_elems:
+            continue
+
+        link = title_elems[0].attrib.get("href") or ""
+        if not link:
+            continue
+
+        snippet_elems = r.css("div.b_caption p") or r.css("p")
+        # Bing wraps the matched words in <strong> and breaks lines around them; collapse that.
+        parsed.append(
+            {
+                "title": " ".join(title_elems[0].get_all_text(separator=" ").split()) or "No Title",
+                "url": _resolve_bing_link(link),
+                "snippet": " ".join(snippet_elems[0].get_all_text(separator=" ").split()) if snippet_elems else "",
+            }
+        )
+    return parsed
+
+
+async def _search_bing(q: str, pages: int) -> Optional[List[Dict]]:
+    """Page through Bing. Returns None when Bing refuses the very first page."""
+    search_results = []
+    seen_urls = set()
+    for i in range(pages):
+        page = await AsyncFetcher.get(BING_ENDPOINT, params={"q": q, "first": 1 + i * BING_PAGE_SIZE})
+        if page.status != 200:
+            return None if i == 0 else search_results
+
+        new_on_this_page = 0
+        for result in _parse_bing_results(page):
+            if result["url"] in seen_urls:
+                continue
+            seen_urls.add(result["url"])
+            search_results.append(result)
+            new_on_this_page += 1
+
+        # Past the last real page Bing keeps serving the final page again.
+        if not new_on_this_page:
+            break
+
+    return search_results
+
+
 @app.get("/api/search")
 async def search_web(q: str, pages: int = 5):
     if not q:
@@ -457,35 +561,25 @@ async def search_web(q: str, pages: int = 5):
 
     pages = max(1, min(pages, DDG_MAX_PAGES))
     try:
-        from urllib.parse import quote_plus
+        results = await _search_ddg(q, pages)
+        if not results:
+            # DuckDuckGo rate-limits aggressively. Ask Bing before telling the user
+            # the phrase is nowhere on the web.
+            bing_results = await _search_bing(q, pages)
+            if bing_results is not None:
+                results = bing_results
 
-        search_results = []
-        seen_urls = set()
-        page = await AsyncFetcher.get(f"{DDG_HTML_ENDPOINT}?q={quote_plus(q)}")
-
-        for _ in range(pages):
-            if page.status != 200:
-                break
-
-            new_on_this_page = 0
-            for result in _parse_ddg_results(page):
-                # DuckDuckGo repeats some links across page boundaries; keep the first occurrence.
-                if result["url"] in seen_urls:
-                    continue
-                seen_urls.add(result["url"])
-                search_results.append(result)
-                new_on_this_page += 1
-
-            # A page of nothing but duplicates means we have hit the end of the useful results.
-            if not new_on_this_page:
-                break
-
-            next_form = _ddg_next_page_form(page)
-            if not next_form:
-                break
-            page = await AsyncFetcher.post(DDG_HTML_ENDPOINT, data=next_form)
-
-        return search_results
+        if results is None:
+            # Returning [] here would tell the user the phrase does not exist on the web,
+            # when really we never got to see any results.
+            raise HTTPException(
+                status_code=503,
+                detail="The search engines refused the request (likely a bot challenge). "
+                "Wait a minute and try again.",
+            )
+        return results
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -53,7 +53,8 @@ export default function Discovery({ onSelectUrl, onSeedCrawl }) {
         `http://localhost:8000/api/search?q=${encodeURIComponent(query)}&pages=${depth}`
       );
       if (!response.ok) {
-        throw new Error('Failed to fetch search results from web');
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.detail || 'Failed to fetch search results from web');
       }
       const data = await response.json();
       setResults(data);
