@@ -8,6 +8,10 @@ This dashboard exposes the full power of the **Scrapling library** via an intuit
 
 ## 🚀 Quick Start (Launch the App)
 
+> 🔧 **Something not working?** → **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)**
+> Every common error with its symptom, cause and fix — including the setup
+> issues you hit when running from a zip (`venv`, browsers, ports).
+
 You can launch both parts of the application using the preconfigured Windows batch files in the root folder:
 
 ### 1. Start the API Brain (Backend)
